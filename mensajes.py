@@ -54,7 +54,7 @@ FALLBACK = {
         "   • Recibes el drive en tu Gmail\n"
         "   • Acceso desde cualquier dispositivo\n\n"
         "📋 LISTA COMPLETA DE CONTENIDO:\n"
-        "👉 https://docs.google.com/spreadsheets/d/1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k/edit\n\n"
+        "https://tinyurl.com/273anthz\n\n"
         "📂 CATEGORÍAS DISPONIBLES:\n"
         "• Creadores chilenos 🇨🇱\n"
         "• Creadores latinos 🌎\n"
@@ -90,7 +90,7 @@ FALLBACK = {
         "📦 +1.500 carpetas | +5.000 GB | +100K archivos\n\n"
         "💎 Desde $4.990 tienes acceso ilimitado\n"
         "🔥 Plan mensual $8.990 - ¡El más elegido!\n\n"
-        "📋 Ver contenido: https://docs.google.com/spreadsheets/d/1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k/edit\n"
+        "📋 Ver contenido: https://tinyurl.com/273anthz\n"
         "💰 Pagar ahora: /precios\n"
         "📞 {admin} - Soporte\n\n"
         "⚡ Acceso inmediato | 100% seguro"
@@ -120,5 +120,11 @@ FALLBACK = {
         "💰 Paga ahora: /precios\n"
         "📂 Ver contenido: /contenido\n\n"
         "¡Aprovecha el finde! 🍻"
+    ),
+    'offline': (
+        "😴 El bot está offline\n\n"
+        "Horario de atención: 08:00 - 22:00 (Hora Chile)\n\n"
+        "Vuelve en horario hábil o escribe a {admin}\n\n"
+        "¡Gracias por entender! 🙌"
     ),
 }

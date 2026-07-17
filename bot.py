@@ -4,9 +4,13 @@ import logging
 import os
 import random
 import threading
-from datetime import datetime
+from datetime import datetime, time
 from functools import partial
 from http.server import HTTPServer, BaseHTTPRequestHandler
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports import zoneinfo as ZoneInfo
 
 from telegram import Update
 from telegram.ext import (
@@ -75,6 +79,16 @@ def _cargar_mensajes_sync():
 def m(key):
     return MENSAJES.get(key, FALLBACK.get(key, ''))
 
+TZ = ZoneInfo("America/Santiago")
+OFFLINE_START = time(22, 0)
+OFFLINE_END = time(8, 0)
+
+def _is_offline():
+    now = datetime.now(TZ).time()
+    if OFFLINE_START <= now or now < OFFLINE_END:
+        return True
+    return False
+
 def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
         service = _get_sheets_service()
@@ -103,6 +117,14 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
     except Exception:
         pass
 
+def offline_filter(handler):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if _is_offline():
+            await update.message.reply_text(m('offline'))
+            return
+        await handler(update, context)
+    return wrapper
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     msg = await update.message.reply_text(m('bienvenida'))
@@ -119,6 +141,8 @@ async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(m('contacto'))
 
 async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if _is_offline():
+        return
     for user in update.message.new_chat_members:
         if not user.is_bot:
             msg = await update.message.reply_text(m('bienvenida'))
@@ -128,6 +152,8 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 AUTO_KEYS = ['auto_4h', 'auto_noche', 'auto_finde']
 
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if _is_offline():
+        return
     idx = context.bot_data.get('auto_idx', 0)
     key = AUTO_KEYS[idx % len(AUTO_KEYS)]
     context.bot_data['auto_idx'] = idx + 1
@@ -159,10 +185,10 @@ def main() -> None:
     t = threading.Thread(target=_start_http, daemon=True)
     t.start()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start",    start))
-    application.add_handler(CommandHandler("precios",  precios))
-    application.add_handler(CommandHandler("contenido", contenido))
-    application.add_handler(CommandHandler("contacto", contacto))
+    application.add_handler(CommandHandler("start",    offline_filter(start)))
+    application.add_handler(CommandHandler("precios",  offline_filter(precios)))
+    application.add_handler(CommandHandler("contenido", offline_filter(contenido)))
+    application.add_handler(CommandHandler("contacto", offline_filter(contacto)))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
     )
