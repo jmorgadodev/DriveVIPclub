@@ -6,7 +6,7 @@ import random
 import threading
 from datetime import datetime, time
 from functools import partial
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import socket
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -171,22 +171,26 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 PORT = int(os.getenv('PORT', '10000'))
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/plain')
-        self.send_header('Content-Length', '2')
-        self.end_headers()
-    def do_GET(self):
-        self.do_HEAD()
-        self.wfile.write(b'ok')
-    def log_message(self, *a, **kw):
-        pass
-
 def _start_http():
-    server = HTTPServer(('0.0.0.0', PORT), HealthHandler)
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('0.0.0.0', PORT))
+    s.listen(5)
+    s.settimeout(1)
     logging.info(f"Health server on port {PORT}")
-    server.serve_forever()
+    while True:
+        try:
+            conn, _ = s.accept()
+            conn.settimeout(5)
+            data = conn.recv(1024)
+            if data:
+                conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
+            conn.close()
+        except socket.timeout:
+            pass
+        except Exception:
+            pass
 
 def main() -> None:
     _cargar_mensajes_sync()
