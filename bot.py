@@ -172,12 +172,13 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
 PORT = int(os.getenv('PORT', '10000'))
 
 class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_HEAD(self):
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
         self.send_header('Content-Length', '2')
-        self.send_header('Connection', 'close')
         self.end_headers()
+    def do_GET(self):
+        self.do_HEAD()
         self.wfile.write(b'ok')
     def log_message(self, *a, **kw):
         pass
