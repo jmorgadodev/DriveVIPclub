@@ -2,7 +2,7 @@
 
 Bot de Telegram para gestión de membresías VIP con acceso a Google Drive.
 
-**Admin:** @koooke
+**Admin:** @backadminthree
 
 ---
 
@@ -136,10 +136,10 @@ python bot.py
 
 1. Usuario entra al grupo público
 2. Bot lo registra en Sheets y envía bienvenida (se borra en 2h)
-3. Usuario contacta a @koooke por DM
-4. @koooke verifica el pago y agrega el email a Google Groups (acceso al Drive)
-5. @koooke actualiza Sheets: plan, fecha_inicio, fecha_fin, estado → `activo`
-6. AppScript verifica cada 6h y expulsa automáticamente a los vencidos
+3. Usuario paga y el bot confirma el pago automáticamente
+4. Usuario envía su Gmail y el bot comparte el acceso al Drive
+5. El bot registra el plan, fechas y estado en Sheets
+6. El bot revoca automáticamente los accesos vencidos
 7. Bot envía mensajes promocionales cada 4h en el grupo público
 
 ---
@@ -148,5 +148,5 @@ python bot.py
 
 - ✅ Tokens y IDs en `.env` (nunca en el código)
 - ✅ `.env` en `.gitignore` (nunca sube a GitHub)
-- ✅ El bot no gestiona pagos — todo es manual vía @koooke
+- ✅ El bot detecta pagos aprobados automáticamente mediante MercadoPago
 - ✅ `token.json` de Google también en `.gitignore`
