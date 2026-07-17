@@ -8,11 +8,11 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         value: 8767323818:AAGyw7g6jNrJWqj3_5p2MAVBM1ejfJNIJ4Y
       - key: PUBLIC_GROUP_ID
-        value: "-1001234567890"
+        value: "-1003902977064"
       - key: VIP_GROUP_ID
-        value: "-1009876543210"
+        value: "-1004328779223"
       - key: CHANNEL_ID
-        value: "-1001112223334"
+        value: "-1004398583245"
       - key: ADMIN_USERNAME
         value: "@koooke"
       - key: GOOGLE_SHEET_ID
