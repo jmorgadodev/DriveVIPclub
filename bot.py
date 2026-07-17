@@ -192,10 +192,22 @@ def _start_http():
         except Exception:
             pass
 
+def _self_ping():
+    import urllib.request
+    url = f'https://drivevipclub.onrender.com/'
+    while True:
+        try:
+            urllib.request.urlopen(url, timeout=10)
+            logging.info("Self-ping OK")
+        except Exception as e:
+            logging.warning(f"Self-ping error: {e}")
+        threading.Event().wait(600)
+
 def main() -> None:
     _cargar_mensajes_sync()
     t = threading.Thread(target=_start_http, daemon=True)
     t.start()
+    threading.Thread(target=_self_ping, daemon=True).start()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start",    offline_filter(start)))
     application.add_handler(CommandHandler("precios",  offline_filter(precios)))
