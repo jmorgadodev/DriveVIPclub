@@ -209,37 +209,53 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
 
-async def comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _crear_preferencia(user_id: int, precio: int, plan: str):
+    import requests as req
+    pref = req.post('https://api.mercadopago.com/checkout/preferences', json={
+        'items': [{
+            'title': f'Membresía {plan} DriveVIPclub',
+            'quantity': 1,
+            'currency_id': 'CLP',
+            'unit_price': precio,
+        }],
+        'external_reference': str(user_id),
+        'notification_url': 'https://drivevipclub.onrender.com/',
+        'back_urls': {'success': 'https://t.me/DriveVIPclubBot', 'failure': 'https://t.me/DriveVIPclubBot'},
+        'auto_return': 'approved',
+    }, headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}', 'Content-Type': 'application/json'})
+    return pref.json()
+
+async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not MP_ACCESS_TOKEN:
-        await update.message.reply_text("❌ Sistema de pago no disponible. Contacta a {admin}.")
+        await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
     try:
-        import requests as req
-        pref = req.post('https://api.mercadopago.com/checkout/preferences', json={
-            'items': [{
-                'title': 'Membresía DriveVIPclub',
-                'quantity': 1,
-                'currency_id': 'CLP',
-                'unit_price': 4990,
-            }],
-            'external_reference': str(user.id),
-            'notification_url': 'https://drivevipclub.onrender.com/',
-            'back_urls': {'success': 'https://t.me/DriveVIPclubBot', 'failure': 'https://t.me/DriveVIPclubBot'},
-            'auto_return': 'approved',
-        }, headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}', 'Content-Type': 'application/json'})
-        data = pref.json()
+        data = await _crear_preferencia(user.id, 4990, 'Semanal')
         if 'init_point' in data:
-            await update.message.reply_text(
-                f"💎 Link de pago para {user.first_name or 'ti'}:\n\n{data['init_point']}\n\n"
-                "✅ Paga y el bot te pedirá tu Gmail automáticamente."
-            )
+            await update.message.reply_text(f"💎 Plan Semanal $4.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
         else:
             await update.message.reply_text("❌ Error generando link. Contacta al admin.")
             logging.error(f"MP error: {data}")
     except Exception as e:
         await update.message.reply_text("❌ Error de conexión. Intenta más tarde.")
-        logging.error(f"Error en /comprar: {e}")
+        logging.error(f"Error en /semanal: {e}")
+
+async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not MP_ACCESS_TOKEN:
+        await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
+        return
+    try:
+        data = await _crear_preferencia(user.id, 8990, 'Mensual')
+        if 'init_point' in data:
+            await update.message.reply_text(f"💎 Plan Mensual $8.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
+        else:
+            await update.message.reply_text("❌ Error generando link. Contacta al admin.")
+            logging.error(f"MP error: {data}")
+    except Exception as e:
+        await update.message.reply_text("❌ Error de conexión. Intenta más tarde.")
+        logging.error(f"Error en /mensual: {e}")
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -433,7 +449,8 @@ def main() -> None:
     application.add_handler(CommandHandler("precios",  precios))
     application.add_handler(CommandHandler("contenido", contenido))
     application.add_handler(CommandHandler("contacto", contacto))
-    application.add_handler(CommandHandler("comprar",  comprar))
+    application.add_handler(CommandHandler("semanal",  semanal))
+    application.add_handler(CommandHandler("mensual",  mensual))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
     )
@@ -442,7 +459,7 @@ def main() -> None:
     )
     job_queue = application.job_queue
     job_queue.run_repeating(mensaje_automatico, interval=14400, first=10)
-    job_queue.run_repeating(verificar_vencidos, interval=1800, first=30)
+    job_queue.run_daily(verificar_vencidos, time=datetime.time(4, 0, tzinfo=TZ))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
