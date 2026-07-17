@@ -2,7 +2,7 @@ from config import ADMIN_USERNAME
 
 FALLBACK = {
     'bienvenida': (
-        "🇨🇱 ¡Bienvenido a DriveVIPclub! 🇨🇱\n\n"
+        "{user} 🇨🇱 ¡Bienvenido a DriveVIPclub! 🇨🇱\n\n"
         "El Drive de contenido (+18) con ya +1500 perfiles, +5000GB y +100.000 archivos en contenido 📦\n\n"
         "⚠️ Recuerda:\n\n"
         "✅ Lee mensajes fijados para tener toda la info 📌\n\n"
@@ -49,7 +49,7 @@ FALLBACK = {
         "   • Resoluciones HD disponibles\n\n"
         "✅ +100.000 ARCHIVOS DISPONIBLES\n"
         "   • Creadores chilenos e internacionales\n"
-        "   • SoloFans, Fansly, Privacy y más\n\n"
+        "   • Iremos agregando más fuentes\n\n"
         "✅ ACCESO INMEDIATO\n"
         "   • Recibes el drive en tu Gmail\n"
         "   • Acceso desde cualquier dispositivo\n\n"

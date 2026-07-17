@@ -125,9 +125,13 @@ def offline_filter(handler):
         await handler(update, context)
     return wrapper
 
+def _bienvenida(user):
+    name = user.mention_html() if user.username else f"@{user.username or user.first_name or 'Usuario'}"
+    return m('bienvenida').format(user=name)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    msg = await update.message.reply_text(m('bienvenida'))
+    msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
     await registrar_usuario(user.id, user.username or 'sin_username')
     context.application.create_task(eliminar_mensaje(msg, 7200))
 
@@ -145,7 +149,7 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     for user in update.message.new_chat_members:
         if not user.is_bot:
-            msg = await update.message.reply_text(m('bienvenida'))
+            msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
 
