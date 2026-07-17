@@ -1,9 +1,12 @@
 import asyncio
 import json
 import logging
+import os
 import random
+import threading
 from datetime import datetime
 from functools import partial
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram import Update
 from telegram.ext import (
@@ -136,8 +139,25 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         print(f"Error enviando mensaje automático: {e}")
 
+PORT = int(os.getenv('PORT', '10000'))
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'ok')
+    def log_message(self, *a, **kw):
+        pass
+
+def _start_http():
+    server = HTTPServer(('0.0.0.0', PORT), HealthHandler)
+    logging.info(f"Health server on port {PORT}")
+    server.serve_forever()
+
 def main() -> None:
     _cargar_mensajes_sync()
+    t = threading.Thread(target=_start_http, daemon=True)
+    t.start()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start",    start))
     application.add_handler(CommandHandler("precios",  precios))
