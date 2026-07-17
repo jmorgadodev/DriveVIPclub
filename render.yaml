@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: DriveVIPclub
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        value: 8767323818:AAGyw7g6jNrJWqj3_5p2MAVBM1ejfJNIJ4Y
+      - key: PUBLIC_GROUP_ID
+        value: "-1001234567890"
+      - key: VIP_GROUP_ID
+        value: "-1009876543210"
+      - key: CHANNEL_ID
+        value: "-1001112223334"
+      - key: ADMIN_USERNAME
+        value: "@koooke"
+      - key: GOOGLE_SHEET_ID
+        value: ""
+      - key: GOOGLE_SHEET_RANGE
+        value: Hoja1!A:I
+      - key: GOOGLE_SERVICE_ACCOUNT
+        value: ""
