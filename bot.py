@@ -70,11 +70,11 @@ def _cargar_mensajes_sync():
         for row in rows[1:]:
             if len(row) >= 2 and row[0].strip():
                 raw[row[0].strip()] = row[1]
-        MENSAJES = {k: v.format(admin=ADMIN_USERNAME) for k, v in raw.items()}
+        MENSAJES = {k: v.replace('{admin}', ADMIN_USERNAME) for k, v in raw.items()}
         logging.info(f"Mensajes cargados desde Sheets: {list(MENSAJES.keys())}")
     except Exception as e:
         logging.warning(f"No se pudieron cargar mensajes desde Sheets ({e}), usando fallback.")
-        MENSAJES = {k: v.format(admin=ADMIN_USERNAME) for k, v in FALLBACK.items()}
+        MENSAJES = {k: v.replace('{admin}', ADMIN_USERNAME) for k, v in FALLBACK.items()}
 
 def m(key):
     return MENSAJES.get(key, FALLBACK.get(key, ''))
