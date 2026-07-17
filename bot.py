@@ -117,14 +117,6 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
     except Exception:
         pass
 
-def offline_filter(handler):
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if _is_offline():
-            await update.message.reply_text(m('offline'))
-            return
-        await handler(update, context)
-    return wrapper
-
 def _bienvenida(user):
     name = user.mention_html() if user.username else user.first_name or 'Usuario'
     return m('bienvenida').format(user=name)
@@ -145,8 +137,6 @@ async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(m('contacto'))
 
 async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if _is_offline():
-        return
     for user in update.message.new_chat_members:
         if not user.is_bot:
             msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
@@ -209,10 +199,10 @@ def main() -> None:
     t.start()
     threading.Thread(target=_self_ping, daemon=True).start()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start",    offline_filter(start)))
-    application.add_handler(CommandHandler("precios",  offline_filter(precios)))
-    application.add_handler(CommandHandler("contenido", offline_filter(contenido)))
-    application.add_handler(CommandHandler("contacto", offline_filter(contacto)))
+    application.add_handler(CommandHandler("start",    start))
+    application.add_handler(CommandHandler("precios",  precios))
+    application.add_handler(CommandHandler("contenido", contenido))
+    application.add_handler(CommandHandler("contacto", contacto))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
     )
