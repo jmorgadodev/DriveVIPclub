@@ -93,7 +93,7 @@ def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
         service = _get_sheets_service()
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        values = [[user_id, username, '', 'pendiente', '', '', 'pendiente', now, now]]
+        values = [[user_id, username, '', '', '', '', '', now]]
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=GOOGLE_SHEET_RANGE,
