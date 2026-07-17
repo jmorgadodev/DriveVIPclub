@@ -440,7 +440,7 @@ def main() -> None:
     )
     job_queue = application.job_queue
     job_queue.run_repeating(mensaje_automatico, interval=14400, first=10)
-    job_queue.run_daily(verificar_vencidos, time=datetime.time(4, 0, tzinfo=TZ))
+    job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
