@@ -1,86 +1,59 @@
-# ============================================================
-# mensajes.py — Mensajes del Bot DriveVIPclub
-# ============================================================
-# Centraliza todos los textos que el bot envía a los usuarios.
-# Edita aquí para personalizar los mensajes sin tocar bot.py.
-# ============================================================
-
 from config import ADMIN_USERNAME
 
-MENSAJE_BIENVENIDA = f"""
-¡Bienvenido a DriveVIPclub! 🎉
-
-📦 Tenemos +1500 carpetas, +5000GB de contenido y +100.000 archivos
-
-💎 PLANES VIP:
-• Semanal: $4.990 CLP
-• Mensual: $7.990 CLP  
-• Bimestral: $9.990 CLP
-
-📂 Para ver el contenido disponible: /contenido
-💰 Para ver métodos de pago: /precios
-📞 Contacto directo: {ADMIN_USERNAME}
-
-⚠️ Este mensaje se eliminará en 2 horas
-"""
-
-MENSAJE_PRECIOS = f"""
-💎 MENÚ PRECIOS DRIVE 💎
-
-🔹 1 SEMANA ACCESO VIP: $4.990 CLP
-🔹 1 MES ACCESO VIP: $7.990 CLP
-🔹 2 MESES ACCESO VIP: $9.990 CLP
-
-💳 Métodos de pago:
-• MercadoPago (cualquier tarjeta débito/crédito/prepago)
-• PayPal
-• Transferencia bancaria
-
-📩 Envía tu comprobante a: {ADMIN_USERNAME}
-"""
-
-MENSAJE_CONTENIDO = f"""
-📂 CONTENIDO DISPONIBLE:
-
-✅ +1500 carpetas organizadas
-✅ +5000GB de contenido premium
-✅ +100.000 archivos
-✅ Actualizaciones semanales
-
-📂 Categorías disponibles:
-• [Categoría 1]
-• [Categoría 2]
-• [Categoría 3]
-
-🔗 Acceso inmediato a tu correo Gmail tras el pago
-
-Para adquirir membresía contacta a: {ADMIN_USERNAME}
-"""
-
-MENSAJE_CONTACTO = f"""
-📞 CONTACTO DIRECTO
-
-Administrador: {ADMIN_USERNAME}
-
-💬 Escríbeme directamente para:
-• Consultar sobre contenido específico
-• Realizar tu compra
-• Resolver dudas
-• Renovar membresía
-
-⚡ Respuesta rápida garantizada
-"""
-
-MENSAJE_AUTO_4H = f"""
-🚀 DriveVIPclub - Acceso Premium 
-
-📦 +1500 carpetas | +5000GB | +100.000 archivos
-
-💎 Planes desde $4.990 CLP
-
-📂 /contenido - Ver catálogo completo
-💰 /precios - Métodos de pago
-📞 /contacto - Hablar con admin
-
-¡No te quedes fuera! 🚀
-"""
+FALLBACK = {
+    'bienvenida': (
+        "¡Bienvenido a DriveVIPclub! 🎉\n\n"
+        "📦 Tenemos +1500 carpetas, +5000GB de contenido y +100.000 archivos\n\n"
+        "💎 PLANES VIP:\n"
+        "• Semanal: $4.990 CLP\n"
+        "• Mensual: $7.990 CLP\n"
+        "• Bimestral: $9.990 CLP\n\n"
+        "📂 Para ver el contenido disponible: /contenido\n"
+        "💰 Para ver métodos de pago: /precios\n"
+        "📞 Contacto directo: {admin}\n\n"
+        "⚠️ Este mensaje se eliminará en 2 horas"
+    ),
+    'precios': (
+        "💎 MENÚ PRECIOS DRIVE 💎\n\n"
+        "🔹 1 SEMANA ACCESO VIP: $4.990 CLP\n"
+        "🔹 1 MES ACCESO VIP: $7.990 CLP\n"
+        "🔹 2 MESES ACCESO VIP: $9.990 CLP\n\n"
+        "💳 Métodos de pago:\n"
+        "• MercadoPago (cualquier tarjeta débito/crédito/prepago)\n"
+        "• PayPal\n"
+        "• Transferencia bancaria\n\n"
+        "📩 Envía tu comprobante a: {admin}"
+    ),
+    'contenido': (
+        "📂 CONTENIDO DISPONIBLE:\n\n"
+        "✅ +1500 carpetas organizadas\n"
+        "✅ +5000GB de contenido premium\n"
+        "✅ +100.000 archivos\n"
+        "✅ Actualizaciones semanales\n\n"
+        "📂 Categorías disponibles:\n"
+        "• [Categoría 1]\n"
+        "• [Categoría 2]\n"
+        "• [Categoría 3]\n\n"
+        "🔗 Acceso inmediato a tu correo Gmail tras el pago\n\n"
+        "Para adquirir membresía contacta a: {admin}"
+    ),
+    'contacto': (
+        "📞 CONTACTO DIRECTO\n\n"
+        "Administrador: {admin}\n\n"
+        "💬 Escríbeme directamente para:\n"
+        "• Consultar sobre contenido específico\n"
+        "• Realizar tu compra\n"
+        "• Resolver dudas\n"
+        "• Renovar membresía\n\n"
+        "⚡ Respuesta rápida garantizada"
+    ),
+    'auto_4h': (
+        "🚀 DriveVIPclub - Acceso Premium\n\n"
+        "📦 +1500 carpetas | +5000GB | +100.000 archivos\n\n"
+        "💎 Planes desde $4.990 CLP\n\n"
+        "📂 /contenido - Ver catálogo completo\n"
+        "💰 /precios - Métodos de pago\n"
+        "📞 /contacto - Hablar con admin\n\n"
+        "¡No te quedes fuera! 🚀"
+    ),
+}

@@ -24,20 +24,18 @@ logging.basicConfig(
 from config import (
     TELEGRAM_BOT_TOKEN,
     PUBLIC_GROUP_ID,
+    ADMIN_USERNAME,
     GOOGLE_SHEET_ID,
     GOOGLE_SHEET_RANGE,
     GOOGLE_SERVICE_ACCOUNT,
     GOOGLE_SERVICE_ACCOUNT_JSON,
+    MENSAJES_SHEET_RANGE,
 )
-from mensajes import (
-    MENSAJE_BIENVENIDA,
-    MENSAJE_PRECIOS,
-    MENSAJE_CONTENIDO,
-    MENSAJE_CONTACTO,
-    MENSAJE_AUTO_4H,
-)
+from mensajes import FALLBACK
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+
+MENSAJES = {}
 
 def _get_sheets_service():
     if GOOGLE_SERVICE_ACCOUNT_JSON:
@@ -51,6 +49,27 @@ def _get_sheets_service():
     else:
         creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
     return build('sheets', 'v4', credentials=creds)
+
+def _cargar_mensajes_sync():
+    global MENSAJES
+    try:
+        service = _get_sheets_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range=MENSAJES_SHEET_RANGE
+        ).execute()
+        rows = result.get('values', [])
+        raw = {}
+        for row in rows[1:]:
+            if len(row) >= 2 and row[0].strip():
+                raw[row[0].strip()] = row[1]
+        MENSAJES = {k: v.format(admin=ADMIN_USERNAME) for k, v in raw.items()}
+        logging.info(f"Mensajes cargados desde Sheets: {list(MENSAJES.keys())}")
+    except Exception as e:
+        logging.warning(f"No se pudieron cargar mensajes desde Sheets ({e}), usando fallback.")
+        MENSAJES = {k: v.format(admin=ADMIN_USERNAME) for k, v in FALLBACK.items()}
+
+def m(key):
+    return MENSAJES.get(key, FALLBACK.get(key, ''))
 
 def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
@@ -82,23 +101,23 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    msg = await update.message.reply_text(MENSAJE_BIENVENIDA)
+    msg = await update.message.reply_text(m('bienvenida'))
     await registrar_usuario(user.id, user.username or 'sin_username')
     context.application.create_task(eliminar_mensaje(msg, 7200))
 
 async def precios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(MENSAJE_PRECIOS)
+    await update.message.reply_text(m('precios'))
 
 async def contenido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(MENSAJE_CONTENIDO)
+    await update.message.reply_text(m('contenido'))
 
 async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(MENSAJE_CONTACTO)
+    await update.message.reply_text(m('contacto'))
 
 async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for user in update.message.new_chat_members:
         if not user.is_bot:
-            msg = await update.message.reply_text(MENSAJE_BIENVENIDA)
+            msg = await update.message.reply_text(m('bienvenida'))
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
 
@@ -106,12 +125,13 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await context.bot.send_message(
             chat_id=PUBLIC_GROUP_ID,
-            text=MENSAJE_AUTO_4H,
+            text=m('auto_4h'),
         )
     except Exception as e:
         print(f"Error enviando mensaje automático: {e}")
 
 def main() -> None:
+    _cargar_mensajes_sync()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start",    start))
     application.add_handler(CommandHandler("precios",  precios))
