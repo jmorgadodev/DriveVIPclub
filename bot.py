@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import random
 from datetime import datetime
 from functools import partial
 
@@ -121,11 +122,16 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
 
+AUTO_KEYS = ['auto_4h', 'auto_noche', 'auto_finde']
+
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
+    idx = context.bot_data.get('auto_idx', 0)
+    key = AUTO_KEYS[idx % len(AUTO_KEYS)]
+    context.bot_data['auto_idx'] = idx + 1
     try:
         await context.bot.send_message(
             chat_id=PUBLIC_GROUP_ID,
-            text=m('auto_4h'),
+            text=m(key),
         )
     except Exception as e:
         print(f"Error enviando mensaje automático: {e}")
