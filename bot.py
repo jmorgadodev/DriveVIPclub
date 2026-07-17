@@ -4,6 +4,8 @@ import logging
 import os
 import random
 import threading
+import urllib.request
+import urllib.parse
 from datetime import datetime, time
 from functools import partial
 import socket
@@ -48,6 +50,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 
 MENSAJES = {}
 PENDING_GMAIL = {}
+PROCESSED_PAYMENTS = set()
 
 def _get_sheets_service():
     if GOOGLE_SERVICE_ACCOUNT_JSON:
@@ -122,6 +125,19 @@ def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
                 return True
     except Exception as e:
         logging.error(f"Error actualizando Sheet para {user_id}: {e}")
+    return False
+
+def _tiene_plan_sync(user_id: int) -> bool:
+    try:
+        service = _get_sheets_service()
+        rows = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:D'
+        ).execute()
+        for row in rows.get('values', []):
+            if row and row[0] == str(user_id) and len(row) > 3 and row[3]:
+                return True
+    except:
+        pass
     return False
 
 def _cargar_mensajes_sync():
@@ -298,71 +314,45 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 PORT = int(os.getenv('PORT', '10000'))
 
-def _procesar_webhook(data: bytes):
-    try:
-        body = data.split(b'\r\n\r\n', 1)[1] if b'\r\n\r\n' in data else b''
-        raw = data.decode('utf-8', errors='replace')
-        first_line = raw.split('\r\n')[0] if '\r\n' in raw else ''
-        method = first_line.split(' ')[0] if ' ' in first_line else '' 
-        path = first_line.split(' ')[1] if len(first_line.split(' ')) > 1 else ''
-        if method != 'POST' or '/webhook' not in path:
-            return
-        # Respond 200 OK fast for IPN-style GET params too
-        if raw.startswith('GET') and ('topic=payment' in raw or 'topic=merchant_order' in raw):
-            pass
-        import urllib.parse as up
-        query = up.parse_qs(up.urlparse(raw.split('\r\n')[0].split(' ')[1] if '\r\n' in raw else '').query)
-        payment_id = None
-        if b'{"action"' in body or b'{"type"' in body:
-            try:
-                j = json.loads(body)
-                payment_id = j.get('data', {}).get('id') or j.get('id')
-            except:
-                pass
-        elif query.get('topic') == ['payment'] or query.get('topic') == ['merchant_order']:
-            payment_id = query.get('id', [None])[0]
-        if not payment_id:
-            return
-        threading.Thread(target=_procesar_pago, args=(payment_id,), daemon=True).start()
-    except:
-        pass
-
-def _procesar_pago(payment_id):
-    import urllib.request as ureq
-    try:
-        req = ureq.Request(
-            f'https://api.mercadopago.com/v1/payments/{payment_id}',
-            headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}'}
-        )
-        with ureq.urlopen(req, timeout=10) as resp:
-            pay = json.loads(resp.read())
-        if pay.get('status') != 'approved':
-            return
-        user_id_str = pay.get('external_reference', '')
-        if not user_id_str or not user_id_str.isdigit():
-            return
-        user_id = int(user_id_str)
-        plan = 'semanal'
-        unit_price = pay.get('transaction_amount', 0)
-        if unit_price and float(unit_price) >= 8000:
-            plan = 'mensual'
-        import datetime as dt
-        hoy = dt.date.today().isoformat()
-        _actualizar_sheet_sync(user_id, 'D', plan)
-        _actualizar_sheet_sync(user_id, 'E', hoy)
-        PENDING_GMAIL[user_id] = True
-        logging.info(f"Pago aprobado para usuario {user_id}, plan {plan}")
-        from telegram import Bot
-        bot = Bot(TELEGRAM_BOT_TOKEN)
-        bot.send_message(
-            chat_id=user_id,
-            text="✅ ¡Pago confirmado! Ahora envíame tu correo Gmail para darte acceso al Drive."
-        )
-    except Exception as e:
-        logging.error(f"Error procesando pago {payment_id}: {e}")
+def _poll_payments():
+    while True:
+        try:
+            params = urllib.parse.urlencode({"status": "approved", "sort": "date_created", "criteria": "desc", "limit": 20})
+            req = urllib.request.Request(
+                f'https://api.mercadopago.com/v1/payments/search?{params}',
+                headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}'}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            for pay in data.get('results', []):
+                pid = pay.get('id')
+                if not pid or pid in PROCESSED_PAYMENTS:
+                    continue
+                user_id_str = pay.get('external_reference', '')
+                if not user_id_str or not user_id_str.isdigit():
+                    continue
+                user_id = int(user_id_str)
+                if _tiene_plan_sync(user_id):
+                    continue
+                plan = 'semanal'
+                if float(pay.get('transaction_amount', 0)) >= 8000:
+                    plan = 'mensual'
+                hoy = datetime.now().date().isoformat()
+                _actualizar_sheet_sync(user_id, 'D', plan)
+                _actualizar_sheet_sync(user_id, 'E', hoy)
+                PROCESSED_PAYMENTS.add(pid)
+                PENDING_GMAIL[user_id] = True
+                logging.info(f"Pago aprobado para usuario {user_id}, plan {plan}")
+                from telegram import Bot
+                Bot(TELEGRAM_BOT_TOKEN).send_message(
+                    chat_id=user_id,
+                    text="✅ ¡Pago confirmado! Ahora envíame tu correo Gmail para darte acceso al Drive."
+                )
+        except Exception as e:
+            logging.error(f"Error polling payments: {e}")
+        threading.Event().wait(30)
 
 def _start_http():
-    import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('0.0.0.0', PORT))
@@ -373,24 +363,15 @@ def _start_http():
         try:
             conn, _ = s.accept()
             conn.settimeout(5)
-            data = conn.recv(4096)
-            if data:
-                first = data.split(b'\r\n')[0].decode('utf-8', errors='replace')
-                path = first.split(' ')[1] if len(first.split(' ')) > 1 else '/'
-                if path.startswith('/webhook') or b'topic=payment' in data or b'data.id' in data:
-                    conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
-                    conn.close()
-                    _procesar_webhook(data)
-                else:
-                    conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
-                    conn.close()
+            conn.recv(4096)
+            conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
+            conn.close()
         except socket.timeout:
             pass
         except Exception:
             pass
 
 def _self_ping():
-    import urllib.request
     url = 'https://drivevipclub.onrender.com/'
     while True:
         try:
@@ -441,9 +422,9 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     _cargar_mensajes_sync()
-    t = threading.Thread(target=_start_http, daemon=True)
-    t.start()
+    threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
+    threading.Thread(target=_poll_payments, daemon=True).start()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start",    start))
     application.add_handler(CommandHandler("precios",  precios))
