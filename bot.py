@@ -43,6 +43,7 @@ from config import (
     MENSAJES_SHEET_RANGE,
     MP_ACCESS_TOKEN,
     DRIVE_FOLDER_ID,
+    LISTADO_SHEET_ID,
 )
 from mensajes import FALLBACK
 
@@ -140,8 +141,37 @@ def _tiene_plan_sync(user_id: int) -> bool:
         pass
     return False
 
+def _cargar_stats_listado():
+    try:
+        service = _get_sheets_service()
+        r = service.spreadsheets().values().get(
+            spreadsheetId=LISTADO_SHEET_ID, range='Listado!A:F'
+        ).execute()
+        rows = r.get('values', [])
+        if len(rows) < 2:
+            return {}
+        carpetas = len(rows) - 1
+        videos = sum(int(row[1]) for row in rows[1:] if len(row) > 1 and row[1].isdigit())
+        fotos = sum(int(row[2]) for row in rows[1:] if len(row) > 2 and row[2].isdigit())
+        tamano_gb = 0
+        for row in rows[1:]:
+            if len(row) > 5 and row[5]:
+                val = row[5].replace(',', '.').replace(' GB', 'e9').replace(' MB', 'e6').replace(' KB', 'e3').replace(' B', '')
+                try:
+                    tamano_gb += float(val) / (1024**3)
+                except:
+                    try:
+                        tamano_gb += float(val)
+                    except:
+                        pass
+        return {'carpetas': carpetas, 'videos': videos, 'fotos': fotos, 'tamano': f'{tamano_gb:.1f} GB'}
+    except Exception as e:
+        logging.warning(f"No se pudieron cargar stats del Listado: {e}")
+        return {}
+
 def _cargar_mensajes_sync():
     global MENSAJES
+    stats = _cargar_stats_listado()
     try:
         service = _get_sheets_service()
         result = service.spreadsheets().values().get(
@@ -153,10 +183,16 @@ def _cargar_mensajes_sync():
             if len(row) >= 2 and row[0].strip():
                 raw[row[0].strip()] = row[1]
         MENSAJES = {k: v.replace('{admin}', ADMIN_USERNAME) for k, v in raw.items()}
+        for k in MENSAJES:
+            for placeholder, val in stats.items():
+                MENSAJES[k] = MENSAJES[k].replace('{' + placeholder + '}', str(val))
         logging.info(f"Mensajes cargados desde Sheets: {list(MENSAJES.keys())}")
     except Exception as e:
         logging.warning(f"No se pudieron cargar mensajes desde Sheets ({e}), usando fallback.")
         MENSAJES = {k: v.replace('{admin}', ADMIN_USERNAME) for k, v in FALLBACK.items()}
+        for k in MENSAJES:
+            for placeholder, val in stats.items():
+                MENSAJES[k] = MENSAJES[k].replace('{' + placeholder + '}', str(val))
 
 def m(key):
     return MENSAJES.get(key, FALLBACK.get(key, ''))

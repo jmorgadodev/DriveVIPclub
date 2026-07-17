@@ -31,6 +31,17 @@
 - Health: GET / → 200 OK (raw socket, no HTTP framework)
 - Webhooks: NOT USED — Render free tier rejects POST; payment detection via MP API polling
 
+## Apps Script
+- `CancelarSuscripciones.gs`: pegar en Extensiones > Apps Script de la planilla Drivetelegram (`1jFaDduB_uEKOavf0ZgRrw9zuodyKwHGVDdlLSsH_cVs`)
+- Función `revisarVencidos()`: recorre Hoja 1, si estado=vencido y email tiene @, revoca permiso del folder HDD y marca "acceso_revocado"
+- Ejecutar `instalarTrigger()` una vez para que corra automáticamente a las 4 AM
+
+## Content Sheet (Listado)
+- ID: `1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k` (env `LISTADO_SHEET_ID`)
+- Tab Listado: 153 carpetas, 1.630 videos, 3.157 fotos, 35.50 GB
+- Bot lee esta planilla al iniciar e inyecta {carpetas}, {videos}, {fotos}, {tamano} en los mensajes automáticamente
+- Placeholders disponibles en mensajes: {carpetas}, {videos}, {fotos}, {tamano}, {admin}, {user}
+
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
 - Check Sheet: python check_sheet.py
