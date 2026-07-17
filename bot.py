@@ -126,7 +126,7 @@ def offline_filter(handler):
     return wrapper
 
 def _bienvenida(user):
-    name = user.mention_html() if user.username else f"@{user.username or user.first_name or 'Usuario'}"
+    name = user.mention_html() if user.username else user.first_name or 'Usuario'
     return m('bienvenida').format(user=name)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
