@@ -5,6 +5,7 @@
 # Variables de entorno — NUNCA subir al repositorio
 .env
 token.json
+.drive_token.json
 credentials.json
 
 # Python

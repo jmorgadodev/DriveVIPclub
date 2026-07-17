@@ -40,6 +40,7 @@ from config import (
     GOOGLE_SHEET_RANGE,
     GOOGLE_SERVICE_ACCOUNT,
     GOOGLE_SERVICE_ACCOUNT_JSON,
+    GOOGLE_DRIVE_OAUTH_TOKEN_JSON,
     MENSAJES_SHEET_RANGE,
     MP_ACCESS_TOKEN,
     DRIVE_FOLDER_ID,
@@ -67,7 +68,17 @@ def _get_sheets_service():
     return build('sheets', 'v4', credentials=creds)
 
 def _get_drive_service():
-    if GOOGLE_SERVICE_ACCOUNT_JSON:
+    if GOOGLE_DRIVE_OAUTH_TOKEN_JSON:
+        import base64
+        info = json.loads(base64.b64decode(GOOGLE_DRIVE_OAUTH_TOKEN_JSON))
+        creds = Credentials.from_authorized_user_info(
+            info, scopes=['https://www.googleapis.com/auth/drive']
+        )
+    elif os.path.exists('.drive_token.json'):
+        creds = Credentials.from_authorized_user_file(
+            '.drive_token.json', scopes=['https://www.googleapis.com/auth/drive']
+        )
+    elif GOOGLE_SERVICE_ACCOUNT_JSON:
         import base64
         info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
         creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
@@ -325,7 +336,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             del PENDING_GMAIL[user.id]
             await update.message.reply_text(
                 f"✅ Acceso concedido a {text}\n"
-                "Revisa tu Drive, la carpeta ya está compartida contigo. ¡Disfruta!"
+                "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
+                f"Link directo: https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}\n"
+                "¡Disfruta!"
             )
         else:
             await update.message.reply_text("❌ Error compartiendo el Drive. Contacta al admin.")
