@@ -4,6 +4,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    healthCheckPath: /
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         value: 8767323818:AAGyw7g6jNrJWqj3_5p2MAVBM1ejfJNIJ4Y
