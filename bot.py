@@ -27,6 +27,7 @@ from config import (
     GOOGLE_SHEET_ID,
     GOOGLE_SHEET_RANGE,
     GOOGLE_SERVICE_ACCOUNT,
+    GOOGLE_SERVICE_ACCOUNT_JSON,
 )
 from mensajes import (
     MENSAJE_BIENVENIDA,
@@ -39,7 +40,11 @@ from mensajes import (
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 def _get_sheets_service():
-    if GOOGLE_SERVICE_ACCOUNT:
+    if GOOGLE_SERVICE_ACCOUNT_JSON:
+        import base64
+        info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
+        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    elif GOOGLE_SERVICE_ACCOUNT:
         with open(GOOGLE_SERVICE_ACCOUNT) as f:
             info = json.load(f)
         creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
