@@ -18,14 +18,18 @@
 ## Bot flow
 1. /start → register user in Sheet → welcome
 2. /semanal ($4.990) or /mensual ($8.990) → create MP preference → send payment link
-3. MP sends webhook to https://drivevipclub.onrender.com/webhook
-4. Bot processes payment: sets plan+fecha_inicio in Sheet, marks PENDING_GMAIL[user_id]
+3. Polling thread cada 30s consulta MP API `v1/payments/search?status=approved`
+4. Payment detected → sets plan+fecha_inicio in Sheet, marks PENDING_GMAIL[user_id]
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
 8. mensaje_automatico rotates auto_4h/auto_noche/auto_finde every 4h in public group
 9. nuevo_miembro welcomes new members in public group
 10. Offline 22-08 (only affects mensajes_automaticos)
+
+## Hooks
+- Health: GET / → 200 OK (raw socket, no HTTP framework)
+- Webhooks: NOT USED — Render free tier rejects POST; payment detection via MP API polling
 
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
