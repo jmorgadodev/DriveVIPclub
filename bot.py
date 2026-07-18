@@ -14,7 +14,7 @@ try:
 except ImportError:
     from backports import zoneinfo as ZoneInfo
 
-from telegram import Update
+from telegram import Update, FSInputFile
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -296,11 +296,14 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await loop.run_in_executor(None, _actualizar_sheet_sync, user.id, 'C', text)
         if ok:
             del PENDING_GMAIL[user.id]
-            await update.message.reply_text(
-                f"✅ Acceso concedido a {text}\n"
-                "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
-                f"Link directo: https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}\n"
-                "¡Disfruta!"
+            await update.message.reply_photo(
+                photo=FSInputFile('demo_drive.png'),
+                caption=(
+                    f"✅ Acceso concedido a {text}\n\n"
+                    "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
+                    f"Link directo: https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}\n"
+                    "¡Disfruta!"
+                )
             )
         else:
             await update.message.reply_text("❌ Error compartiendo el Drive. Contacta al admin.")
