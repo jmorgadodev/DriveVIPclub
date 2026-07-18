@@ -20,6 +20,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    MessageReactionHandler,
     filters,
 )
 from google.oauth2.credentials import Credentials
@@ -221,6 +222,11 @@ def _is_offline():
 def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
         service = _get_sheets_service()
+        existing = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
+        ).execute().get('values', [])
+        if any(row and row[0] == str(user_id) for row in existing[1:]):
+            return
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         values = [[user_id, username, '', '', '', '', '', now]]
         service.spreadsheets().values().append(
@@ -345,21 +351,58 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif update.message.chat.type == 'private':
         pass
 
-AUTO_KEYS = ['auto_4h', 'auto_noche', 'auto_finde']
+def _auto_key() -> str:
+    now = datetime.now(TZ)
+    if now.hour >= 19:
+        return 'auto_noche'
+    if now.weekday() >= 5:
+        return 'auto_finde'
+    return 'auto_4h'
 
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     if _is_offline():
         return
-    idx = context.bot_data.get('auto_idx', 0)
-    key = AUTO_KEYS[idx % len(AUTO_KEYS)]
-    context.bot_data['auto_idx'] = idx + 1
     try:
-        await context.bot.send_message(
+        message = await context.bot.send_message(
             chat_id=PUBLIC_GROUP_ID,
-            text=m(key),
+            text=m(_auto_key()),
         )
+        context.bot_data.setdefault('promo_message_ids', set()).add(message.message_id)
     except Exception as e:
         print(f"Error enviando mensaje automático: {e}")
+
+async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    reaction = update.message_reaction
+    if not reaction or reaction.chat.id != PUBLIC_GROUP_ID or not reaction.user:
+        return
+    if not reaction.new_reaction:
+        return
+    if reaction.message_id not in context.bot_data.get('promo_message_ids', set()):
+        return
+
+    user = reaction.user
+    seen = context.bot_data.setdefault('reaction_contacts', set())
+    key = (reaction.message_id, user.id)
+    if key in seen:
+        return
+    seen.add(key)
+
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="👋 Vi tu reacción. ¿Quieres ver los planes? Usa /precios o escríbenos tu consulta.",
+        )
+    except Exception:
+        await context.bot.send_message(
+            chat_id=PUBLIC_GROUP_ID,
+            reply_to_message_id=reaction.message_id,
+            text=(
+                f"{user.mention_html()} para escribirte primero abre "
+                "<a href=\"https://t.me/DriveVIPclubBot?start=interes\">@DriveVIPclubBot</a> "
+                "y presiona Iniciar."
+            ),
+            parse_mode='HTML',
+        )
 
 PORT = int(os.getenv('PORT', '10000'))
 
@@ -484,6 +527,7 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
     )
+    application.add_handler(MessageReactionHandler(reaccion))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje)
     )
