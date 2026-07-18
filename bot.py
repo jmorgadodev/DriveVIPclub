@@ -14,7 +14,7 @@ try:
 except ImportError:
     from backports import zoneinfo as ZoneInfo
 
-from telegram import Update, FSInputFile
+from telegram import Update, InputFile
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -45,12 +45,14 @@ from config import (
     MENSAJES_SHEET_RANGE,
     MP_ACCESS_TOKEN,
     DRIVE_FOLDER_ID,
+    LISTADO_SHEET_ID,
 )
 from mensajes import FALLBACK
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 MENSAJES = {}
+STATS = {}
 PENDING_GMAIL = {}
 PROCESSED_PAYMENTS = set()
 
@@ -170,8 +172,40 @@ def _cargar_mensajes_sync():
         logging.warning(f"No se pudieron cargar mensajes desde Sheets ({e}), usando fallback.")
         MENSAJES = {k: v.replace('{admin}', ADMIN_USERNAME) for k, v in FALLBACK.items()}
 
+def _cargar_stats_listado_sync():
+    global STATS
+    if not LISTADO_SHEET_ID:
+        return
+    try:
+        service = _get_sheets_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=LISTADO_SHEET_ID, range='A:F'
+        ).execute()
+        rows = result.get('values', [])
+        carpetas = max(0, len(rows) - 1)
+        videos = 0
+        fotos = 0
+        for r in rows[1:]:
+            if len(r) >= 3:
+                try: videos += int(r[1].replace(',', ''))
+                except: pass
+                try: fotos += int(r[2].replace(',', ''))
+                except: pass
+        STATS = {
+            'carpetas': f'{carpetas:,}'.replace(',', '.'),
+            'videos': f'{videos:,}'.replace(',', '.'),
+            'fotos': f'{fotos:,}'.replace(',', '.'),
+            'tamano': f'+1 TB',
+        }
+        logging.info(f"Stats listado: {STATS['carpetas']} modelos, {STATS['videos']} videos, {STATS['fotos']} fotos")
+    except Exception as e:
+        logging.warning(f"No se pudieron cargar stats del listado: {e}")
+
 def m(key):
-    return MENSAJES.get(key, FALLBACK.get(key, ''))
+    text = MENSAJES.get(key, FALLBACK.get(key, ''))
+    for k, v in STATS.items():
+        text = text.replace('{' + k + '}', v)
+    return text
 
 TZ = ZoneInfo("America/Santiago")
 
@@ -214,7 +248,11 @@ def _bienvenida(user):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
+    text = _bienvenida(user)
+    if os.path.exists('bienvenida.png'):
+        msg = await update.message.reply_photo(photo=InputFile('bienvenida.png'), caption=text, parse_mode='HTML')
+    else:
+        msg = await update.message.reply_text(text, parse_mode='HTML')
     await registrar_usuario(user.id, user.username or 'sin_username')
     context.application.create_task(eliminar_mensaje(msg, 7200))
 
@@ -227,10 +265,24 @@ async def contenido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(m('contacto'))
 
+async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(m('lista'))
+
+async def ventajas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = m('ventajas')
+    if os.path.exists('ventajas.png'):
+        await update.message.reply_photo(photo=InputFile('ventajas.png'), caption=text)
+    else:
+        await update.message.reply_text(text)
+
 async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for user in update.message.new_chat_members:
         if not user.is_bot:
-            msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
+            text = _bienvenida(user)
+            if os.path.exists('bienvenida.png'):
+                msg = await update.message.reply_photo(photo=InputFile('bienvenida.png'), caption=text, parse_mode='HTML')
+            else:
+                msg = await update.message.reply_text(text, parse_mode='HTML')
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
 
@@ -297,7 +349,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if ok:
             del PENDING_GMAIL[user.id]
             await update.message.reply_photo(
-                photo=FSInputFile('demo_drive.png'),
+                photo=InputFile('demo_drive.png'),
                 caption=(
                     f"✅ Acceso concedido a {text}\n\n"
                     "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
@@ -312,11 +364,25 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     key = context.job.data
+    text = m(key)
+    can_have_image = key in ('auto_08', 'auto_12', 'auto_16', 'auto_20')
+    last_img = context.bot_data.get('last_promo_img', 0.0)
+    now = datetime.now().timestamp()
+    enough_time = (now - last_img) >= 14400
     try:
-        message = await context.bot.send_message(
-            chat_id=PUBLIC_GROUP_ID,
-            text=m(key),
-        )
+        if can_have_image and enough_time and os.path.exists('recordatorio.png') and random.random() < 0.5:
+            message = await context.bot.send_photo(
+                chat_id=PUBLIC_GROUP_ID,
+                photo=InputFile('recordatorio.png'),
+                caption=text,
+            )
+            context.bot_data['last_promo_img'] = now
+            context.application.create_task(eliminar_mensaje(message, 14400))
+        else:
+            message = await context.bot.send_message(
+                chat_id=PUBLIC_GROUP_ID,
+                text=text,
+            )
         context.bot_data.setdefault('promo_message_ids', set()).add(message.message_id)
     except Exception as e:
         print(f"Error enviando mensaje automático: {e}")
@@ -472,6 +538,7 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not DRIVE_FOLDER_ID:
         return
     loop = asyncio.get_event_loop()
+    from datetime import timedelta
     try:
         service = await loop.run_in_executor(None, _get_sheets_service)
         rows = await loop.run_in_executor(
@@ -482,9 +549,7 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         rows = rows.get('values', [])
         hoy = datetime.now().date()
-        manana = hoy.isoformat()
-        from datetime import timedelta
-        manana = (hoy + timedelta(days=1)).isoformat()
+        manana = hoy + timedelta(days=1)
         notified_key = f'pre_expiry_{hoy.isoformat()}'
         notified = context.bot_data.setdefault(notified_key, set())
         for row in rows[1:]:
@@ -492,31 +557,46 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
                 continue
             user_id = row[0]
             estado = row[6] if len(row) > 6 else ''
-            fecha_fin = row[5] if len(row) > 5 else ''
-            if estado == 'activo' and fecha_fin == manana and user_id.isdigit():
-                uid = int(user_id)
-                if uid in notified:
+            fecha_fin_str = row[5] if len(row) > 5 else ''
+            if estado != 'activo' or not fecha_fin_str or not user_id.isdigit():
+                continue
+            try:
+                for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d'):
+                    try:
+                        fecha_fin = datetime.strptime(fecha_fin_str, fmt).date()
+                        break
+                    except ValueError:
+                        continue
+                else:
                     continue
-                notified.add(uid)
-                try:
-                    await context.bot.send_message(
-                        chat_id=uid,
-                        text=(
-                            "⏰ Tu membresía vence MAÑANA.\n\n"
-                            "Renueva ahora y no pierdas el acceso:\n"
-                            "💎 /semanal ($4.990) — 7 días\n"
-                            "💎 /mensual ($8.990) — 30 días\n\n"
-                            "Sigue todo igual, solo se extiende tu fecha."
-                        )
+            except:
+                continue
+            if fecha_fin != manana:
+                continue
+            uid = int(user_id)
+            if uid in notified:
+                continue
+            notified.add(uid)
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=(
+                        "⏰ Tu membresía vence MAÑANA.\n\n"
+                        "Renueva ahora y no pierdas el acceso:\n"
+                        "💎 /semanal ($4.990) — 7 días\n"
+                        "💎 /mensual ($8.990) — 30 días\n\n"
+                        "Sigue todo igual, solo se extiende tu fecha."
                     )
-                    logging.info(f"Aviso pre-vencimiento enviado a {uid}")
-                except Exception as e:
-                    logging.warning(f"No se pudo avisar a {uid}: {e}")
+                )
+                logging.info(f"Aviso pre-vencimiento enviado a {uid}")
+            except Exception as e:
+                logging.warning(f"No se pudo avisar a {uid}: {e}")
     except Exception as e:
         logging.error(f"Error en verificar_proximos_vencer: {e}")
 
 def main() -> None:
     _cargar_mensajes_sync()
+    _cargar_stats_listado_sync()
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
     threading.Thread(target=_poll_payments, daemon=True).start()
@@ -527,6 +607,8 @@ def main() -> None:
     application.add_handler(CommandHandler("contacto", contacto))
     application.add_handler(CommandHandler("semanal",  semanal))
     application.add_handler(CommandHandler("mensual",  mensual))
+    application.add_handler(CommandHandler("lista",    lista))
+    application.add_handler(CommandHandler("ventajas", ventajas))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
     )
@@ -544,6 +626,11 @@ def main() -> None:
         )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
+    async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _cargar_stats_listado_sync)
+    job_queue.run_daily(refrescar_stats, time=time(6, 0, tzinfo=TZ))
+    job_queue.run_daily(refrescar_stats, time=time(18, 0, tzinfo=TZ))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
