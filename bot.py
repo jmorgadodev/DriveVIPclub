@@ -374,22 +374,28 @@ def _poll_payments():
                 if not user_id_str or not user_id_str.isdigit():
                     continue
                 user_id = int(user_id_str)
-                if _tiene_plan_sync(user_id):
-                    continue
                 plan = 'semanal'
                 if float(pay.get('transaction_amount', 0)) >= 8000:
                     plan = 'mensual'
                 hoy = datetime.now().date().isoformat()
+                tiene_plan = _tiene_plan_sync(user_id)
                 _actualizar_sheet_sync(user_id, 'D', plan)
                 _actualizar_sheet_sync(user_id, 'E', hoy)
                 PROCESSED_PAYMENTS.add(pid)
-                PENDING_GMAIL[user_id] = True
-                logging.info(f"Pago aprobado para usuario {user_id}, plan {plan}")
+                logging.info(f"Pago aprobado para usuario {user_id}, plan {plan} (renovacion={tiene_plan})")
                 from telegram import Bot
-                Bot(TELEGRAM_BOT_TOKEN).send_message(
-                    chat_id=user_id,
-                    text="✅ ¡Pago confirmado! Ahora envíame tu correo Gmail para darte acceso al Drive."
-                )
+                bot_instance = Bot(TELEGRAM_BOT_TOKEN)
+                if not tiene_plan:
+                    PENDING_GMAIL[user_id] = True
+                    bot_instance.send_message(
+                        chat_id=user_id,
+                        text="✅ ¡Pago confirmado! Ahora envíame tu correo Gmail para darte acceso al Drive."
+                    )
+                else:
+                    bot_instance.send_message(
+                        chat_id=user_id,
+                        text=f"✅ ¡Pago recibido! Tu membresía {plan} se ha extendido desde hoy ({hoy}). ¡Disfruta!"
+                    )
         except Exception as e:
             logging.error(f"Error polling payments: {e}")
         threading.Event().wait(30)
@@ -462,6 +468,53 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logging.error(f"Error en verificar_vencidos: {e}")
 
+async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not DRIVE_FOLDER_ID:
+        return
+    loop = asyncio.get_event_loop()
+    try:
+        service = await loop.run_in_executor(None, _get_sheets_service)
+        rows = await loop.run_in_executor(
+            None,
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
+            ).execute()
+        )
+        rows = rows.get('values', [])
+        hoy = datetime.now().date()
+        manana = hoy.isoformat()
+        from datetime import timedelta
+        manana = (hoy + timedelta(days=1)).isoformat()
+        notified_key = f'pre_expiry_{hoy.isoformat()}'
+        notified = context.bot_data.setdefault(notified_key, set())
+        for row in rows[1:]:
+            if len(row) < 7:
+                continue
+            user_id = row[0]
+            estado = row[6] if len(row) > 6 else ''
+            fecha_fin = row[5] if len(row) > 5 else ''
+            if estado == 'activo' and fecha_fin == manana and user_id.isdigit():
+                uid = int(user_id)
+                if uid in notified:
+                    continue
+                notified.add(uid)
+                try:
+                    await context.bot.send_message(
+                        chat_id=uid,
+                        text=(
+                            "⏰ Tu membresía vence MAÑANA.\n\n"
+                            "Renueva ahora y no pierdas el acceso:\n"
+                            "💎 /semanal ($4.990) — 7 días\n"
+                            "💎 /mensual ($8.990) — 30 días\n\n"
+                            "Sigue todo igual, solo se extiende tu fecha."
+                        )
+                    )
+                    logging.info(f"Aviso pre-vencimiento enviado a {uid}")
+                except Exception as e:
+                    logging.warning(f"No se pudo avisar a {uid}: {e}")
+    except Exception as e:
+        logging.error(f"Error en verificar_proximos_vencer: {e}")
+
 def main() -> None:
     _cargar_mensajes_sync()
     threading.Thread(target=_start_http, daemon=True).start()
@@ -490,6 +543,7 @@ def main() -> None:
             name=key,
         )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
+    job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
