@@ -1,9 +1,9 @@
 ## Config / Env
-- Token: 8767323818:AAGyw7g6jNrJWqj3_5p2MAVBM1ejfJNIJ4Y
+- Token: (set via .env + Render dashboard)
 - Sheets: GOOGLE_SHEET_ID=1jFaDduB_uEKOavf0ZgRrw9zuodyKwHGVDdlLSsH_cVs
 - Service account: impulsacv-gsc-mcp@gen-lang-client-0417969585.iam.gserviceaccount.com
 - Service account creds path: C:\Users\jorge\.codex\credentials\gsc-service-account.json
-- MP Access Token: APP_USR-8269931565190295-071710-0fe418d9bc33e5f5d4ed78badd7a9bd8-3547846805
+- MP Access Token: (set via .env + Render dashboard)
 - Drive folder ID: 1EHGYTF0QHiZUFq8FEaa3W3UppGGupaKb (carpeta maestra, dueño vpack2034@gmail.com)
 - Render: srv-d9d019urnols73ciq81g, https://drivevipclub.onrender.com
 - Admin: @backadminthree
