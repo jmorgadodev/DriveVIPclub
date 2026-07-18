@@ -6,7 +6,7 @@
 
 var SHEET_ID = '1jFaDduB_uEKOavf0ZgRrw9zuodyKwHGVDdlLSsH_cVs';
 var HOJA = 'Hoja 1';
-var DRIVE_FOLDER_ID = '1HxAlgzaZ9acatHGGsVcqcFZXj5Q225vf';
+var DRIVE_FOLDER_ID = '1EHGYTF0QHiZUFq8FEaa3W3UppGGupaKb';
 var DRIVE_FOLDER_NAME = 'HDD';
 
 function obtenerCarpeta() {

@@ -3,7 +3,7 @@ from config import ADMIN_USERNAME
 FALLBACK = {
     'bienvenida': (
         "{user} 🇨🇱 ¡Bienvenido a DriveVIPclub! 🇨🇱\n\n"
-        "El Drive de contenido (+18) con ya +1500 perfiles, +{tamano} y +{videos} videos + {fotos} fotos en contenido 📦\n\n"
+        "El Drive de contenido (+18) con cientos de perfiles, videos y fotos en contenido 📦\n\n"
         "⚠️ Recuerda:\n\n"
         "✅ Lee mensajes fijados para tener toda la info 📌\n\n"
         "✅ Mira la lista de modelos en el Drive para saber cuáles tenemos\n\n"
@@ -41,24 +41,17 @@ FALLBACK = {
     'contenido': (
         "📦 CONTENIDO EXCLUSIVO DRIVEVIPCLUB\n\n"
         "🌟 LO QUE OBTIENES:\n\n"
-        "✅ +{carpetas} CARPETAS ORGANIZADAS\n"
+        "✅ CARPETAS ORGANIZADAS POR MODELO\n"
         "   • Contenido actualizado SEMANALMENTE\n"
         "   • Categorías fáciles de navegar\n\n"
-        "✅ +{tamano} DE CONTENIDO PREMIUM\n"
-        "   • Solo material verificado y de calidad\n"
+        "✅ CONTENIDO PREMIUM EN ALTA CALIDAD\n"
+        "   • Solo material verificado\n"
         "   • Resoluciones HD disponibles\n\n"
-        "✅ +{videos} VIDEOS + {fotos} FOTOS DISPONIBLES\n"
-        "   • Creadores chilenos e internacionales\n"
-        "   • Iremos agregando más fuentes\n\n"
+        "✅ CIENTOS DE VIDEOS Y FOTOS DISPONIBLES\n"
+        "   • Creadores chilenos e internacionales\n\n"
         "✅ ACCESO INMEDIATO\n"
         "   • Recibes el drive en tu Gmail\n"
         "   • Acceso desde cualquier dispositivo\n\n"
-        "📋 LISTA COMPLETA DE CONTENIDO:\n"
-        "https://tinyurl.com/273anthz\n\n"
-        "📊 REVISA LA PLANILLA PARA MÁS DETALLE:\n"
-        "   • Total de videos: {videos}\n"
-        "   • Total de fotos: {fotos}\n"
-        "   • Peso total: {tamano}\n\n"
         "📂 CATEGORÍAS DISPONIBLES:\n"
         "• Creadores chilenos 🇨🇱\n"
         "• Creadores latinos 🌎\n"
@@ -94,31 +87,27 @@ FALLBACK = {
     ),
     'auto_08': (
         "👀 SEGUIMOS ATENDIENDO CON NORMALIDAD\n\n"
-        "📋 En el listado puedes ver por perfil la cantidad de videos, fotos y tamaño disponible.\n"
-        "📦 Seguimos subiendo material nuevo, por eso el catálogo crece cada semana.\n\n"
+        "📦 Seguimos subiendo material nuevo todas las semanas.\n\n"
         "⚡ Contacto: {admin}\n"
         "📌 Referencias: https://t.me/drivechileno1\n\n"
         "💎 Planes: /precios | 📂 Contenido: /contenido"
     ),
     'auto_12': (
         "🔥 CONTENIDO EN ALTA CALIDAD\n\n"
-        "🎬 Videos premium, resoluciones HD y perfiles organizados para encontrar contenido rápido.\n"
-        "📋 Revisa el listado para conocer el peso y cantidad de videos de cada perfil.\n\n"
+        "🎬 Videos premium, resoluciones HD y perfiles organizados para encontrar contenido rápido.\n\n"
         "⚡ Contacto: {admin}\n"
         "💎 Acceso: /precios | 📂 Catálogo: /contenido"
     ),
     'auto_16': (
         "📦 EL DRIVE SIGUE CRECIENDO\n\n"
-        "Cada semana añadimos material. Algunos perfiles todavía tienen contenido pendiente por subir.\n"
-        "🎬 Revisa el listado para ver qué ya está disponible y su tamaño actual.\n\n"
+        "Cada semana añadimos material nuevo al Drive.\n\n"
         "⚡ Contacto: {admin}\n"
         "📌 Referencias: https://t.me/drivechileno1\n\n"
         "💎 Ver planes: /precios"
     ),
     'auto_20': (
         "⚡ ACCESO A CONTENIDO PREMIUM\n\n"
-        "Videos de alta calidad, contenido exclusivo y actualizaciones constantes en el Drive.\n"
-        "📋 El listado muestra el detalle de cada perfil para que sepas qué encontrarás.\n\n"
+        "Videos de alta calidad, contenido exclusivo y actualizaciones constantes en el Drive.\n\n"
         "⚡ Pago por Mercado Pago o transferencias coordinadas por DM: {admin}\n"
         "💎 Planes: /precios | 📂 Contenido: /contenido"
     ),

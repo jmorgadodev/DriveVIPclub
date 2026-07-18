@@ -4,7 +4,7 @@
 - Service account: impulsacv-gsc-mcp@gen-lang-client-0417969585.iam.gserviceaccount.com
 - Service account creds path: C:\Users\jorge\.codex\credentials\gsc-service-account.json
 - MP Access Token: APP_USR-8269931565190295-071710-0fe418d9bc33e5f5d4ed78badd7a9bd8-3547846805
-- Drive folder ID: 1HxAlgzaZ9acatHGGsVcqcFZXj5Q225vf (carpeta "HDD", dueño vpack2034@gmail.com)
+- Drive folder ID: 1EHGYTF0QHiZUFq8FEaa3W3UppGGupaKb (carpeta maestra, dueño vpack2034@gmail.com)
 - Render: srv-d9d019urnols73ciq81g, https://drivevipclub.onrender.com
 - Admin: @backadminthree
 - Public group: -1003902977064, VIP group: -1004328779223, Channel: -1004398583245
@@ -23,9 +23,8 @@
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
-8. mensaje_automatico rotates auto_4h/auto_noche/auto_finde every 4h in public group
+8. mensaje_automatico publica en horarios fijos: 00:00, 08:00, 12:00, 16:00, 20:00 Chile
 9. nuevo_miembro welcomes new members in public group
-10. Offline 22-08 (only affects mensajes_automaticos)
 
 ## Hooks
 - Health: GET / → 200 OK (raw socket, no HTTP framework)
@@ -36,11 +35,10 @@
 - Función `revisarVencidos()`: recorre Hoja 1, si estado=vencido y email tiene @, revoca permiso del folder HDD y marca "acceso_revocado"
 - Ejecutar `instalarTrigger()` una vez para que corra automáticamente a las 4 AM
 
-## Content Sheet (Listado)
-- ID: `1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k` (env `LISTADO_SHEET_ID`)
-- Tab Listado: 153 carpetas, 1.630 videos, 3.157 fotos, 35.50 GB
-- Bot lee esta planilla al iniciar e inyecta {carpetas}, {videos}, {fotos}, {tamano} en los mensajes automáticamente
-- Placeholders disponibles en mensajes: {carpetas}, {videos}, {fotos}, {tamano}, {admin}, {user}
+## Mensajes
+- Los mensajes se cargan desde la pestaña Mensajes de la planilla principal
+- Placeholders disponibles: {admin}, {user}
+- Si falla la carga, usa fallback en mensajes.py
 
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
