@@ -210,14 +210,6 @@ def m(key):
     return MENSAJES.get(key, FALLBACK.get(key, ''))
 
 TZ = ZoneInfo("America/Santiago")
-OFFLINE_START = time(22, 0)
-OFFLINE_END = time(8, 0)
-
-def _is_offline():
-    now = datetime.now(TZ).time()
-    if OFFLINE_START <= now or now < OFFLINE_END:
-        return True
-    return False
 
 def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
@@ -351,21 +343,12 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif update.message.chat.type == 'private':
         pass
 
-def _auto_key() -> str:
-    now = datetime.now(TZ)
-    if now.hour >= 19:
-        return 'auto_noche'
-    if now.weekday() >= 5:
-        return 'auto_finde'
-    return 'auto_4h'
-
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if _is_offline():
-        return
+    key = context.job.data
     try:
         message = await context.bot.send_message(
             chat_id=PUBLIC_GROUP_ID,
-            text=m(_auto_key()),
+            text=m(key),
         )
         context.bot_data.setdefault('promo_message_ids', set()).add(message.message_id)
     except Exception as e:
@@ -532,7 +515,13 @@ def main() -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje)
     )
     job_queue = application.job_queue
-    job_queue.run_repeating(mensaje_automatico, interval=14400, first=10)
+    for hour, key in ((0, 'auto_00'), (8, 'auto_08'), (12, 'auto_12'), (16, 'auto_16'), (20, 'auto_20')):
+        job_queue.run_daily(
+            mensaje_automatico,
+            time=time(hour, 0, tzinfo=TZ),
+            data=key,
+            name=key,
+        )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

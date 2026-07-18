@@ -86,35 +86,40 @@ FALLBACK = {
         "💬 Mensaje sugerido:\n"
         "\"Hola! Compré una membresía y necesito acceso\""
     ),
-    'auto_4h': (
+    'auto_00': (
+        "🌙 ÚLTIMO AVISO DEL DÍA\n\n"
+        "El canal queda disponible y mañana seguimos con novedades.\n"
+        "📦 El Drive recibe material nuevo todas las semanas.\n\n"
+        "💎 Revisa planes: /precios | 📂 Contenido: /contenido"
+    ),
+    'auto_08': (
         "👀 SEGUIMOS ATENDIENDO CON NORMALIDAD\n\n"
-        "⚡ Se acepta pago por Mercado Pago y transferencias coordinadas por DM.\n"
-        "⚡ Contacto: {admin}\n"
-        "⚡ Si no puedes enviar DM, reacciona a este mensaje y el bot te indicará cómo continuar.\n\n"
-        "📌 Canal de referencias: https://t.me/drivechileno1\n"
-        "📦 Contenido nuevo añadido al Drive todas las semanas.\n\n"
-        "💎 Ver planes: /precios | 📂 Ver contenido: /contenido"
-    ),
-    'auto_noche': (
-        "🌙 BUENAS NOCHES — SIGUE DISPONIBLE 🌙\n\n"
-        "Seguimos atendiendo y el Drive sigue disponible.\n\n"
-        "⚡ Pago por Mercado Pago o transferencias coordinadas por DM.\n"
+        "📋 En el listado puedes ver por perfil la cantidad de videos, fotos y tamaño disponible.\n"
+        "📦 Seguimos subiendo material nuevo, por eso el catálogo crece cada semana.\n\n"
         "⚡ Contacto: {admin}\n"
         "📌 Referencias: https://t.me/drivechileno1\n\n"
-        "💎 Ver planes: /precios | 📂 Ver contenido: /contenido"
+        "💎 Planes: /precios | 📂 Contenido: /contenido"
     ),
-    'auto_finde': (
-        "🎉 ¡FIN DE SEMANA DRIVEVIPCLUB! 🎉\n\n"
-        "El Drive se actualiza todas las semanas con contenido nuevo.\n\n"
-        "⚡ Pago por Mercado Pago o transferencias coordinadas por DM.\n"
+    'auto_12': (
+        "🔥 CONTENIDO EN ALTA CALIDAD\n\n"
+        "🎬 Videos premium, resoluciones HD y perfiles organizados para encontrar contenido rápido.\n"
+        "📋 Revisa el listado para conocer el peso y cantidad de videos de cada perfil.\n\n"
+        "⚡ Contacto: {admin}\n"
+        "💎 Acceso: /precios | 📂 Catálogo: /contenido"
+    ),
+    'auto_16': (
+        "📦 EL DRIVE SIGUE CRECIENDO\n\n"
+        "Cada semana añadimos material. Algunos perfiles todavía tienen contenido pendiente por subir.\n"
+        "🎬 Revisa el listado para ver qué ya está disponible y su tamaño actual.\n\n"
         "⚡ Contacto: {admin}\n"
         "📌 Referencias: https://t.me/drivechileno1\n\n"
-        "💎 Ver planes: /precios | 📂 Ver contenido: /contenido"
+        "💎 Ver planes: /precios"
     ),
-    'offline': (
-        "😴 El bot está offline\n\n"
-        "Horario de atención: 08:00 - 22:00 (Hora Chile)\n\n"
-        "Vuelve en horario hábil o escribe a {admin}\n\n"
-        "¡Gracias por entender! 🙌"
+    'auto_20': (
+        "⚡ ACCESO A CONTENIDO PREMIUM\n\n"
+        "Videos de alta calidad, contenido exclusivo y actualizaciones constantes en el Drive.\n"
+        "📋 El listado muestra el detalle de cada perfil para que sepas qué encontrarás.\n\n"
+        "⚡ Pago por Mercado Pago o transferencias coordinadas por DM: {admin}\n"
+        "💎 Planes: /precios | 📂 Contenido: /contenido"
     ),
 }
