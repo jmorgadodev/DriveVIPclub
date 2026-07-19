@@ -6,7 +6,7 @@ import random
 import threading
 import urllib.request
 import urllib.parse
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import socket
@@ -285,67 +285,6 @@ async def registrar_usuario(user_id: int, username: str) -> None:
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_usuario_sync, user_id, username))
 
-async def registrar_ingreso(user_id: int, username: str) -> None:
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_ingreso_sync, user_id, username))
-
-async def registrar_salida(user_id: int) -> None:
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_salida_sync, user_id))
-
-def _registrar_ingreso_sync(user_id: int, username: str) -> None:
-    try:
-        service = _get_sheets_service()
-        data = _execute_sheets(service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        )).get('values', [])
-        now = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
-        for i, row in enumerate(data):
-            if row and row[0] == str(user_id):
-                _execute_sheets(service.spreadsheets().values().update(
-                    spreadsheetId=GOOGLE_SHEET_ID,
-                    range=f'Hoja 1!I{i+1}',
-                    valueInputOption='RAW',
-                    body={'values': [[now]]},
-                ))
-                return
-        row_num = len(data) + 1
-        _execute_sheets(service.spreadsheets().values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'Hoja 1!A{row_num}:E{row_num}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[str(user_id), username, '', '', '']]},
-        ))
-        _execute_sheets(service.spreadsheets().values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'Hoja 1!H{row_num}:I{row_num}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[now, now]]},
-        ))
-        logging.info(f"Ingreso registrado: {username} ({user_id})")
-    except Exception as e:
-        logging.error(f"Error registrando ingreso: {e}")
-
-def _registrar_salida_sync(user_id: int) -> None:
-    try:
-        service = _get_sheets_service()
-        data = _execute_sheets(service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        )).get('values', [])
-        now = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
-        for i, row in enumerate(data):
-            if row and row[0] == str(user_id):
-                _execute_sheets(service.spreadsheets().values().update(
-                    spreadsheetId=GOOGLE_SHEET_ID,
-                    range=f'Hoja 1!J{i+1}',
-                    valueInputOption='RAW',
-                    body={'values': [[now]]},
-                ))
-                logging.info(f"Salida registrada: {user_id}")
-                return
-    except Exception as e:
-        logging.error(f"Error registrando salida: {e}")
-
 async def eliminar_mensaje(msg, segundos: int) -> None:
     await asyncio.sleep(segundos)
     try:
@@ -376,7 +315,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         if not user or not update.message:
             return
-        await registrar_usuario(user.id, user.username or 'sin_username')
         msg = await _enviar_mensaje_bienvenida(
             context, update.effective_chat.id, _bienvenida(user)
         )
@@ -446,13 +384,9 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
         new_status = new.status
         logging.info(f"ChatMember update: user={new.user.id} old={old_status} new={new_status}")
         if new_status in ('left', 'kicked') and old_status != new_status:
-            if old_status in ('member', 'administrator', 'restricted'):
-                await registrar_salida(new.user.id)
-                logging.info(f"Salida detectada via ChatMemberHandler: {new.user.id}")
             return
         if new_status in ('member', 'administrator') and old_status not in ('member', 'administrator'):
             user = new.user
-            await registrar_ingreso(user.id, user.username or 'sin_username')
             try:
                 msg = await _enviar_mensaje_bienvenida(context, chat.id, _bienvenida(user))
                 context.application.create_task(eliminar_mensaje(msg, 14400))
@@ -486,6 +420,7 @@ async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
     try:
+        await registrar_usuario(user.id, user.username or 'sin_username')
         data = await _crear_preferencia(user.id, 4990, 'Semanal')
         if 'init_point' in data:
             await update.message.reply_text(f"💎 Plan Semanal $4.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
@@ -505,6 +440,7 @@ async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
     try:
+        await registrar_usuario(user.id, user.username or 'sin_username')
         data = await _crear_preferencia(user.id, 8990, 'Mensual')
         if 'init_point' in data:
             await update.message.reply_text(f"💎 Plan Mensual $8.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
@@ -606,7 +542,7 @@ CAPTIONS_SAMPLES = [
     f"\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: {GROUP_LINK}",
 ]
 
-def _list_folder_files(folder_id, fields="files(id,name,size,mimeType)"):
+def _list_folder_files(folder_id, fields="nextPageToken,files(id,name,size,mimeType)"):
     """Lista todos los archivos dentro de una carpeta (con paginación)."""
     drive = _get_drive_service()
     results = []
@@ -633,7 +569,7 @@ def _find_all_folders(name):
     while True:
         r = _execute_drive(drive.files().list(
             q=f"name='{name}' and mimeType='application/vnd.google-apps.folder'",
-            fields="files(id)",
+            fields="nextPageToken,files(id)",
             pageSize=200,
             pageToken=pt
         ))
@@ -641,7 +577,7 @@ def _find_all_folders(name):
         pt = r.get("nextPageToken")
         if not pt:
             break
-    return folders
+    return sorted(folders, key=lambda folder: folder['id'])
 
 def _cache_drive_folders():
     """Lightweight: only cache folder ID lists, not file metadata."""
@@ -651,12 +587,12 @@ def _cache_drive_folders():
     logging.info(f"Drive folders cached: {len(fotos)} Fotos, {len(videos_folders)} Videos")
     return fotos, videos_folders
 
-async def _obtener_media_rotar(pool, idx_key, media_type, loop, bot_data):
-    """Rota por carpetas secuencialmente, elige archivos sin repetir dentro de cada carpeta."""
+async def _obtener_media_horaria(pool, media_type, loop, slot):
+    """Elige una carpeta y archivo estables para cada bloque horario."""
     pool_size = len(pool)
-    for _ in range(pool_size):
-        idx = bot_data.setdefault(idx_key, 0) % pool_size
-        bot_data[idx_key] = idx + 1
+    start_idx = slot % pool_size
+    for offset in range(pool_size):
+        idx = (start_idx + offset) % pool_size
         folder = pool[idx]
         files = await loop.run_in_executor(_GOOGLE_EXECUTOR, _list_folder_files, folder["id"])
         candidates = [f for f in files if media_type in f.get("mimeType", "")]
@@ -665,9 +601,7 @@ async def _obtener_media_rotar(pool, idx_key, media_type, loop, bot_data):
         if not candidates:
             continue
         candidates.sort(key=lambda f: f['id'])
-        file_key = f'{idx_key}_file_idx'
-        file_idx = bot_data.setdefault(file_key, 0)
-        bot_data[file_key] = (file_idx + 1) % len(candidates)
+        file_idx = (slot // pool_size) % len(candidates)
         return candidates[file_idx]
     return None
 
@@ -682,16 +616,17 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         context.bot_data['fotos_folders'] = fotos_folders
         context.bot_data['videos_folders'] = vids_folders
     loop = asyncio.get_event_loop()
-    # 70% image, 30% video
-    use_video = vids_folders and random.random() < 0.3
+    slot = int(datetime.now(TZ).timestamp() // 3600)
+    # Tres videos distribuidos por cada diez publicaciones.
+    use_video = vids_folders and slot % 10 in (2, 5, 8)
     chosen = None
     if use_video:
-        chosen = await _obtener_media_rotar(vids_folders, 'vids_folder_idx', 'video', loop, context.bot_data)
+        chosen = await _obtener_media_horaria(vids_folders, 'video', loop, slot)
     if not chosen:
-        chosen = await _obtener_media_rotar(fotos_folders, 'fotos_folder_idx', 'image', loop, context.bot_data)
+        chosen = await _obtener_media_horaria(fotos_folders, 'image', loop, slot)
     if not chosen:
         return
-    caption = random.choice(CAPTIONS_SAMPLES)
+    caption = CAPTIONS_SAMPLES[slot % len(CAPTIONS_SAMPLES)]
     for k, v in STATS.items():
         caption = caption.replace('{' + k + '}', v)
     try:
@@ -1022,7 +957,16 @@ def main() -> None:
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (9, 13, 18, 21):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
-    job_queue.run_repeating(publicar_muestra, interval=3600, first=10, name='muestra_1h')
+    now = datetime.now(TZ)
+    next_sample = now.replace(minute=5, second=0, microsecond=0)
+    if next_sample <= now:
+        next_sample += timedelta(hours=1)
+    job_queue.run_repeating(
+        publicar_muestra,
+        interval=3600,
+        first=next_sample,
+        name='muestra_1h',
+    )
     job_queue.run_daily(limpiar_dia, time=time(0, 0, tzinfo=TZ), name='limpieza_diaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
