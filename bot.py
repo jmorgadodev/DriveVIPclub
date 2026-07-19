@@ -400,19 +400,17 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         for user in update.message.new_chat_members:
             if user.is_bot:
                 continue
-            text = _bienvenida(user)
+            await registrar_usuario(user.id, user.username or 'sin_username')
+            await registrar_ingreso(user.id, user.username or 'sin_username')
             try:
                 if os.path.exists('bienvenida.png'):
                     with open('bienvenida.png', 'rb') as f:
-                        msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
+                        msg = await update.message.reply_photo(photo=InputFile(f), caption=_bienvenida(user), parse_mode='HTML')
                 else:
-                    msg = await update.message.reply_text(text, parse_mode='HTML')
+                    msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
+                context.application.create_task(eliminar_mensaje(msg, 7200))
             except Exception as e:
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
-                continue
-            await registrar_usuario(user.id, user.username or 'sin_username')
-            await registrar_ingreso(user.id, user.username or 'sin_username')
-            context.application.create_task(eliminar_mensaje(msg, 7200))
             try:
                 chan_msg = await update.message.reply_text(
                     f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
@@ -442,6 +440,33 @@ async def _salida_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         logging.error(f"Error en _salida_miembro: {e}")
 
+async def _enviar_mensaje_bienvenida(context, chat_id, user, text):
+    """Envía bienvenida con foto o texto."""
+    if os.path.exists('bienvenida.png'):
+        with open('bienvenida.png', 'rb') as f:
+            return await context.bot.send_photo(
+                chat_id=chat_id, photo=InputFile(f), caption=text, parse_mode='HTML'
+            )
+    return await context.bot.send_message(
+        chat_id=chat_id, text=text, parse_mode='HTML'
+    )
+
+async def _enviar_promo_canal(context, chat_id, user):
+    """Envía el mensaje 'ANTES DE IRTE' promocionando el canal."""
+    return await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
+            "Tenemos un CANAL con AVANCES REALES del contenido.\n"
+            "Muestras en video y foto actualizadas cada 30 min.\n\n"
+            "✅ Ve la calidad REAL antes de pagar\n"
+            "✅ Contenido auténtico, no capturas editadas\n"
+            "✅ Decide con muestras en vivo\n\n"
+            "👉 @DriveVIPclub"
+        ),
+        parse_mode='HTML'
+    )
+
 async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         cm = update.chat_member
@@ -466,36 +491,18 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
             return
         if new_status in ('member', 'administrator') and old_status not in ('member', 'administrator'):
             user = new.user
-            text = _bienvenida(user)
+            await registrar_usuario(user.id, user.username or 'sin_username')
+            await registrar_ingreso(user.id, user.username or 'sin_username')
             try:
-                if os.path.exists('bienvenida.png'):
-                    with open('bienvenida.png', 'rb') as f:
-                        msg = await context.bot.send_photo(
-                            chat_id=chat.id, photo=InputFile(f), caption=text, parse_mode='HTML'
-                        )
-                else:
-                    msg = await context.bot.send_message(
-                        chat_id=chat.id, text=text, parse_mode='HTML'
-                    )
-                await registrar_usuario(user.id, user.username or 'sin_username')
-                await registrar_ingreso(user.id, user.username or 'sin_username')
+                msg = await _enviar_mensaje_bienvenida(context, chat.id, user, _bienvenida(user))
                 context.application.create_task(eliminar_mensaje(msg, 7200))
-                chan_msg = await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=(
-                        f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
-                        "Tenemos un CANAL con AVANCES REALES del contenido.\n"
-                        "Muestras en video y foto actualizadas cada 30 min.\n\n"
-                        "✅ Ve la calidad REAL antes de pagar\n"
-                        "✅ Contenido auténtico, no capturas editadas\n"
-                        "✅ Decide con muestras en vivo\n\n"
-                        "👉 @DriveVIPclub"
-                    ),
-                    parse_mode='HTML'
-                )
+            except Exception as e:
+                logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
+            try:
+                chan_msg = await _enviar_promo_canal(context, chat.id, user)
                 context.application.create_task(eliminar_mensaje(chan_msg, 14400))
             except Exception as e:
-                logging.error(f"Error en _bienvenida_chat_member enviando msg a {user.id} en {chat.id}: {e}")
+                logging.error(f"Error enviando promo canal a {user.id} en {chat.id}: {e}")
     except Exception as e:
         logging.error(f"Error en _bienvenida_chat_member: {e}")
 
