@@ -426,11 +426,11 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error enviando mensaje automático: {e}")
 
 CANAL_TEXTS = [
-    "\u2728 {carpetas} modelos organizados A-Z en nuestro Drive.\n{videos} VIDEOS \u2022 {fotos} FOTOS\n\n\ud83d\udc47 Accede hoy: @DriveVIPclubBot",
-    "\ud83d\udce6 \u00bfListo para ver lo que tenemos?\n{carpetas} modelos \u2022 {videos} videos \u2022 {fotos} fotos\n\n\ud83d\udc47 Habla con @DriveVIPclubBot",
-    "\ud83d\udd25 Drive actualizado esta semana\n{videos} VIDEOS en HD\n{carpetas} modelos\n\n\ud83d\udc47 \u00bfQuieres entrar? @DriveVIPclubBot",
-    "\ud83d\udcca DATO: tenemos planilla DETALLADA con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\ud83d\udc47 Pide el link: @DriveVIPclubBot",
-    "\ud83c\udf1f Desde $4.990 el acceso m\u00e1s completo.\nSin l\u00edmite de descargas, 24/7.\n\n\ud83d\udc47 Compra aqu\u00ed: @DriveVIPclubBot",
+    "\u2728 {carpetas} modelos organizados A-Z en nuestro Drive.\n{videos} VIDEOS \u2022 {fotos} FOTOS\n\n\U0001F447 Accede hoy: @DriveVIPclubBot",
+    "\U0001F4E6 \u00bfListo para ver lo que tenemos?\n{carpetas} modelos \u2022 {videos} videos \u2022 {fotos} fotos\n\n\U0001F447 Habla con @DriveVIPclubBot",
+    "\U0001F525 Drive actualizado esta semana\n{videos} VIDEOS en HD\n{carpetas} modelos\n\n\U0001F447 \u00bfQuieres entrar? @DriveVIPclubBot",
+    "\U0001F4CA DATO: tenemos planilla DETALLADA con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Pide el link: @DriveVIPclubBot",
+    "\U0001F31F Desde $4.990 el acceso m\u00e1s completo.\nSin l\u00edmite de descargas, 24/7.\n\n\U0001F447 Compra aqu\u00ed: @DriveVIPclubBot",
 ]
 
 async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -446,12 +446,12 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 SAMPLES_DIRS = ['samples', '.']
 CAPTIONS_SAMPLES = [
-    "\ud83d\udcf7 Sample exclusivo de nuestro contenido.\n{carpetas} modelos \u2022 {videos} videos \u2022 +1TB\n\n\ud83d\udc47 Quieres ver mas? @DriveVIPclubBot",
-    "\ud83d\udd25 Esto es solo una muestra.\nTenemos {carpetas} modelos organizados A-Z.\n\n\ud83d\udc47 Accede hoy: @DriveVIPclubBot",
-    "\ud83d\udc8e Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\ud83d\udc47 Habla con @DriveVIPclubBot",
-    "\ud83d\udcca Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\ud83d\udc47 Info: @DriveVIPclubBot",
-    "\ud83c\udf1f Desde $4.990 el plan semanal.\nMercadoPago, acceso inmediato.\n\n\ud83d\udc47 Compra aqui: @DriveVIPclubBot",
-    "\ud83d\udce6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\ud83d\udc47 Unete: @DriveVIPclubBot",
+    "\U0001F4F7 Sample exclusivo de nuestro contenido.\n{carpetas} modelos \u2022 {videos} videos \u2022 +1TB\n\n\U0001F447 Quieres ver mas? @DriveVIPclubBot",
+    "\U0001F525 Esto es solo una muestra.\nTenemos {carpetas} modelos organizados A-Z.\n\n\U0001F447 Accede hoy: @DriveVIPclubBot",
+    "\U0001F48E Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\U0001F447 Habla con @DriveVIPclubBot",
+    "\U0001F4CA Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Info: @DriveVIPclubBot",
+    "\U0001F31F Desde $4.990 el plan semanal.\nMercadoPago, acceso inmediato.\n\n\U0001F447 Compra aqui: @DriveVIPclubBot",
+    "\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: @DriveVIPclubBot",
 ]
 
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
