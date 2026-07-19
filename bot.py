@@ -781,48 +781,51 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
     caption = CAPTIONS_SAMPLES[slot % len(CAPTIONS_SAMPLES)]
     for k, v in STATS.items():
         caption = caption.replace('{' + k + '}', v)
+    drive = _get_drive_service()
+    from io import BytesIO
+    is_vid = chosen.get('mimeType', '').startswith('video/')
     try:
-        drive = _get_drive_service()
         data = await loop.run_in_executor(
             _GOOGLE_EXECUTOR,
             lambda: _execute_drive(drive.files().get_media(fileId=chosen['id']))
         )
-        from io import BytesIO
-        is_vid = chosen.get('mimeType', '').startswith('video/')
-        generic = f"muestra.{'mp4' if is_vid else 'jpg'}"
         if is_vid:
             msg = await context.bot.send_video(
                 chat_id=CHANNEL_ID,
-                video=InputFile(BytesIO(data), filename=generic),
+                video=InputFile(BytesIO(data), filename="muestra.mp4"),
                 caption=caption
             )
         else:
             msg = await context.bot.send_photo(
                 chat_id=CHANNEL_ID,
-                photo=InputFile(BytesIO(data), filename=generic),
+                photo=InputFile(BytesIO(data), filename="muestra.jpg"),
                 caption=caption
             )
-        context.bot_data.setdefault('today_posts', set()).add(msg.message_id)
-        context.application.create_task(
-            eliminar_mensaje(msg, SCHEDULED_DELETE_SECONDS)
-        )
-        logging.info(f"Muestra publicada ({len(context.bot_data['today_posts'])} hoy)")
     except Exception as e:
-        logging.error(f"Error publicando muestra: {e}")
-
-async def limpiar_dia(context: ContextTypes.DEFAULT_TYPE) -> None:
-    mids = context.bot_data.get('today_posts', set())
-    if not mids:
-        return
-    deleted = 0
-    for mid in mids:
+        if not is_vid:
+            logging.error(f"Error publicando muestra: {e}")
+            return
+        logging.warning(f"No se pudo publicar el video ({e}); enviando foto de respaldo")
+        fallback = await _obtener_media_horaria(fotos_folders, 'image', loop, slot)
+        if not fallback:
+            return
         try:
-            await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=mid)
-            deleted += 1
-        except Exception:
-            pass
-    mids.clear()
-    logging.info(f"Limpieza diaria: {deleted} mensajes eliminados")
+            data = await loop.run_in_executor(
+                _GOOGLE_EXECUTOR,
+                lambda: _execute_drive(drive.files().get_media(fileId=fallback['id']))
+            )
+            msg = await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=InputFile(BytesIO(data), filename="muestra.jpg"),
+                caption=caption,
+            )
+        except Exception as fallback_error:
+            logging.error(f"Error publicando foto de respaldo: {fallback_error}")
+            return
+    context.application.create_task(
+        eliminar_mensaje(msg, SCHEDULED_DELETE_SECONDS)
+    )
+    logging.info("Muestra publicada")
 
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
@@ -1163,13 +1166,12 @@ def main() -> None:
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (10, 15, 20):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
-    for hour in range(9, 24, 2):
+    for hour in range(24):
         job_queue.run_daily(
             publicar_muestra,
             time=time(hour, 5, tzinfo=TZ),
             name=f'muestra_{hour}',
         )
-    job_queue.run_daily(limpiar_dia, time=time(0, 0, tzinfo=TZ), name='limpieza_diaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(_GOOGLE_EXECUTOR, _cargar_stats_listado_sync)

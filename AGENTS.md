@@ -67,7 +67,7 @@
 - Auto-posts programados: 10:00, 15:00 y 20:00 Chile; borrar 3h
 - CANAL_TEXTS rotan 5 variantes con stats y CTA al bot
 - Primeros posts de bienvenida fijados en el canal
-- publicar_muestra(): 1 media cada 2h de 09:05 a 23:05 Chile, borrar 3h
+- publicar_muestra(): 1 media cada hora a los :05 Chile, borrar 3h
   - Carga imágenes (~1028) y videos ≤10MB (~101) vía API Drive (paginación 200), cachea en bot_data
   - 70% foto / 30% video aleatorio
   - Lleva set `used_images` para no repetir; cuando agota, reinicia

@@ -22,7 +22,7 @@ FALLBACK = {
         "✅ Ayuda después del pago: {admin}\n\n"
         "Este mensaje se borrará en 15 minutos.\n\n"
         "📺 CANAL CON AVANCES REALES\n"
-        "Muestras en video y foto publicadas durante el día.\n\n"
+        "Muestras en video y foto publicadas cada 1 hora.\n\n"
         "✅ Ve la calidad REAL antes de pagar\n"
         "✅ Contenido auténtico, no capturas editadas\n"
         "✅ Decide con muestras en vivo\n\n"
