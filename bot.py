@@ -453,15 +453,15 @@ CAPTIONS_SAMPLES = [
     "\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: @DriveVIPclubBot",
 ]
 
-def _list_drive_images():
+def _list_drive_media(mime_prefix):
     try:
         drive = _get_drive_service()
         all_files = []
         page_token = None
         while True:
             r = drive.files().list(
-                q="mimeType contains 'image/'",
-                fields="files(id,name,size)",
+                q=f"mimeType contains '{mime_prefix}/'",
+                fields="files(id,name,size,mimeType)",
                 pageSize=200,
                 pageToken=page_token,
                 orderBy="name"
@@ -470,25 +470,35 @@ def _list_drive_images():
             page_token = r.get("nextPageToken")
             if not page_token:
                 break
-        logging.info(f"Drive images cached: {len(all_files)}")
         return all_files
     except Exception as e:
-        logging.error(f"Error listing drive images: {e}")
+        logging.error(f"Error listing drive {mime_prefix}s: {e}")
         return []
+
+def _cache_drive_media():
+    imgs = _list_drive_media("image")
+    vids = [v for v in _list_drive_media("video") if int(v.get("size", 0)) <= 10 * 1024 * 1024]
+    logging.info(f"Drive media cached: {len(imgs)} images, {len(vids)} small videos")
+    return imgs, vids
 
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
     imgs = context.bot_data.get('drive_images')
-    if not imgs:
+    vids = context.bot_data.get('drive_videos')
+    if not imgs or not vids:
         loop = asyncio.get_event_loop()
-        imgs = await loop.run_in_executor(None, _list_drive_images)
+        imgs, vids = await loop.run_in_executor(None, _cache_drive_media)
         if not imgs:
             return
         context.bot_data['drive_images'] = imgs
+        context.bot_data['drive_videos'] = vids
     used = context.bot_data.setdefault('used_images', set())
-    available = [i for i in imgs if i['id'] not in used]
+    # Decide type: 70% image, 30% video (if videos available)
+    use_video = vids and random.random() < 0.3
+    pool = vids if use_video else imgs
+    available = [i for i in pool if i['id'] not in used]
     if not available:
         used.clear()
-        available = imgs
+        available = pool
     chosen = random.choice(available)
     used.add(chosen['id'])
     caption = random.choice(CAPTIONS_SAMPLES)
@@ -496,18 +506,25 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         caption = caption.replace('{' + k + '}', v)
     try:
         drive = _get_drive_service()
-        img_bytes = drive.files().get_media(fileId=chosen['id']).execute()
+        data = drive.files().get_media(fileId=chosen['id']).execute()
         from io import BytesIO
-        msg = await context.bot.send_photo(
-            chat_id=CHANNEL_ID,
-            photo=InputFile(BytesIO(img_bytes), filename=chosen['name']),
-            caption=caption
-        )
+        is_vid = chosen.get('mimeType', '').startswith('video/')
+        if is_vid:
+            msg = await context.bot.send_video(
+                chat_id=CHANNEL_ID,
+                video=InputFile(BytesIO(data), filename=chosen['name']),
+                caption=caption
+            )
+        else:
+            msg = await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=InputFile(BytesIO(data), filename=chosen['name']),
+                caption=caption
+            )
         context.application.create_task(eliminar_mensaje(msg, 3600))
-        logging.info(f"Muestra publicada: {chosen['name']} ({len(used)}/{len(imgs)})")
+        logging.info(f"Muestra {'video' if is_vid else 'foto'} publicada: {chosen['name']} ({len(used)}/{len(pool)})")
     except Exception as e:
         logging.error(f"Error publicando muestra: {e}")
-        # Remove from used on error so we try another next time
         used.discard(chosen['id'])
 
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
