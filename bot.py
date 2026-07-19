@@ -444,6 +444,36 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logging.error(f"Error enviando mensaje al canal: {e}")
 
+SAMPLES_DIRS = ['samples', '.']
+CAPTIONS_SAMPLES = [
+    "\ud83d\udcf7 Sample exclusivo de nuestro contenido.\n{carpetas} modelos \u2022 {videos} videos \u2022 +1TB\n\n\ud83d\udc47 Quieres ver mas? @DriveVIPclubBot",
+    "\ud83d\udd25 Esto es solo una muestra.\nTenemos {carpetas} modelos organizados A-Z.\n\n\ud83d\udc47 Accede hoy: @DriveVIPclubBot",
+    "\ud83d\udc8e Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\ud83d\udc47 Habla con @DriveVIPclubBot",
+    "\ud83d\udcca Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\ud83d\udc47 Info: @DriveVIPclubBot",
+    "\ud83c\udf1f Desde $4.990 el plan semanal.\nMercadoPago, acceso inmediato.\n\n\ud83d\udc47 Compra aqui: @DriveVIPclubBot",
+    "\ud83d\udce6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\ud83d\udc47 Unete: @DriveVIPclubBot",
+]
+
+async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
+    import glob
+    candidates = []
+    for d in SAMPLES_DIRS:
+        if os.path.isdir(d):
+            candidates.extend(glob.glob(os.path.join(d, '*.png')) + glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.jpeg')))
+    if not candidates:
+        return
+    random.shuffle(candidates)
+    img_path = candidates[0]
+    caption = random.choice(CAPTIONS_SAMPLES)
+    for k, v in STATS.items():
+        caption = caption.replace('{' + k + '}', v)
+    try:
+        with open(img_path, 'rb') as f:
+            msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=InputFile(f), caption=caption)
+        context.application.create_task(eliminar_mensaje(msg, 3600))
+    except Exception as e:
+        logging.error(f"Error publicando muestra al canal: {e}")
+
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
     if not reaction or reaction.chat.id != PUBLIC_GROUP_ID or not reaction.user:
@@ -685,6 +715,7 @@ def main() -> None:
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (9, 13, 18, 21):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
+    job_queue.run_repeating(publicar_muestra, interval=3600, first=10, name='muestra_horaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _cargar_stats_listado_sync)
