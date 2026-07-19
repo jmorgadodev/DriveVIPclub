@@ -1077,7 +1077,12 @@ def main() -> None:
     _run_google_sync(_cargar_estado_pagos_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .media_write_timeout(60)
+        .build()
+    )
     application.add_handler(CommandHandler("start",    start))
     application.add_handler(CommandHandler("precios",  precios))
     application.add_handler(CommandHandler("contenido", contenido))
