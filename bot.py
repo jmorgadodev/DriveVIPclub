@@ -572,25 +572,24 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         caption = caption.replace('{' + k + '}', v)
     try:
         drive = _get_drive_service()
-        data = drive.files().get_media(fileId=chosen['id']).execute()
+        data = await asyncio.get_event_loop().run_in_executor(None, lambda: drive.files().get_media(fileId=chosen['id']).execute())
         from io import BytesIO
         is_vid = chosen.get('mimeType', '').startswith('video/')
+        generic = f"muestra.{'mp4' if is_vid else 'jpg'}"
         if is_vid:
-            generic = f"muestra.{'mp4' if is_vid else 'jpg'}"
-            if is_vid:
-                msg = await context.bot.send_video(
-                    chat_id=CHANNEL_ID,
-                    video=InputFile(BytesIO(data), filename=generic),
-                    caption=caption
-                )
-            else:
-                msg = await context.bot.send_photo(
-                    chat_id=CHANNEL_ID,
-                    photo=InputFile(BytesIO(data), filename=generic),
-                    caption=caption
-                )
-            context.bot_data.setdefault('today_posts', set()).add(msg.message_id)
-            logging.info(f"Muestra publicada ({len(context.bot_data['today_posts'])} hoy)")
+            msg = await context.bot.send_video(
+                chat_id=CHANNEL_ID,
+                video=InputFile(BytesIO(data), filename=generic),
+                caption=caption
+            )
+        else:
+            msg = await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=InputFile(BytesIO(data), filename=generic),
+                caption=caption
+            )
+        context.bot_data.setdefault('today_posts', set()).add(msg.message_id)
+        logging.info(f"Muestra publicada ({len(context.bot_data['today_posts'])} hoy)")
     except Exception as e:
         logging.error(f"Error publicando muestra: {e}")
         used.discard(chosen['id'])
