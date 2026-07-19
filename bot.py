@@ -40,7 +40,6 @@ from config import (
     CHANNEL_ID,
     ADMIN_USERNAME,
     GOOGLE_SHEET_ID,
-    GOOGLE_SHEET_RANGE,
     GOOGLE_SERVICE_ACCOUNT,
     GOOGLE_SERVICE_ACCOUNT_JSON,
     GOOGLE_DRIVE_OAUTH_TOKEN_JSON,
@@ -59,41 +58,58 @@ STATS = {}
 PENDING_GMAIL = {}
 PROCESSED_PAYMENTS = set()
 
+_SHEETS_SERVICE = None
+_DRIVE_SERVICE = None
+_SHEETS_LOCK = threading.Lock()
+_DRIVE_LOCK = threading.Lock()
+
 def _get_sheets_service():
-    if GOOGLE_SERVICE_ACCOUNT_JSON:
-        import base64
-        info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    elif GOOGLE_SERVICE_ACCOUNT:
-        with open(GOOGLE_SERVICE_ACCOUNT) as f:
-            info = json.load(f)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    else:
-        creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
-    return build('sheets', 'v4', credentials=creds)
+    global _SHEETS_SERVICE
+    if _SHEETS_SERVICE is None:
+        with _SHEETS_LOCK:
+            if _SHEETS_SERVICE is not None:
+                return _SHEETS_SERVICE
+            if GOOGLE_SERVICE_ACCOUNT_JSON:
+                import base64
+                info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
+                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+            elif GOOGLE_SERVICE_ACCOUNT:
+                with open(GOOGLE_SERVICE_ACCOUNT) as f:
+                    info = json.load(f)
+                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+            else:
+                creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
+            _SHEETS_SERVICE = build('sheets', 'v4', credentials=creds)
+    return _SHEETS_SERVICE
 
 def _get_drive_service():
-    if GOOGLE_DRIVE_OAUTH_TOKEN_JSON:
-        import base64
-        info = json.loads(base64.b64decode(GOOGLE_DRIVE_OAUTH_TOKEN_JSON))
-        creds = Credentials.from_authorized_user_info(
-            info, scopes=['https://www.googleapis.com/auth/drive']
-        )
-    elif os.path.exists('.drive_token.json'):
-        creds = Credentials.from_authorized_user_file(
-            '.drive_token.json', scopes=['https://www.googleapis.com/auth/drive']
-        )
-    elif GOOGLE_SERVICE_ACCOUNT_JSON:
-        import base64
-        info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    elif GOOGLE_SERVICE_ACCOUNT:
-        with open(GOOGLE_SERVICE_ACCOUNT) as f:
-            info = json.load(f)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    else:
-        creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
-    return build('drive', 'v3', credentials=creds)
+    global _DRIVE_SERVICE
+    if _DRIVE_SERVICE is None:
+        with _DRIVE_LOCK:
+            if _DRIVE_SERVICE is not None:
+                return _DRIVE_SERVICE
+            if GOOGLE_DRIVE_OAUTH_TOKEN_JSON:
+                import base64
+                info = json.loads(base64.b64decode(GOOGLE_DRIVE_OAUTH_TOKEN_JSON))
+                creds = Credentials.from_authorized_user_info(
+                    info, scopes=['https://www.googleapis.com/auth/drive']
+                )
+            elif os.path.exists('.drive_token.json'):
+                creds = Credentials.from_authorized_user_file(
+                    '.drive_token.json', scopes=['https://www.googleapis.com/auth/drive']
+                )
+            elif GOOGLE_SERVICE_ACCOUNT_JSON:
+                import base64
+                info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
+                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+            elif GOOGLE_SERVICE_ACCOUNT:
+                with open(GOOGLE_SERVICE_ACCOUNT) as f:
+                    info = json.load(f)
+                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+            else:
+                creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
+            _DRIVE_SERVICE = build('drive', 'v3', credentials=creds)
+    return _DRIVE_SERVICE
 
 def _compartir_drive_sync(email: str) -> bool:
     try:
@@ -221,12 +237,18 @@ def _registrar_usuario_sync(user_id: int, username: str) -> None:
         if any(row and row[0] == str(user_id) for row in existing[1:]):
             return
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        values = [[user_id, username, '', '', '', '', '', now]]
-        service.spreadsheets().values().append(
+        row_num = len(existing) + 1
+        service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=GOOGLE_SHEET_RANGE,
-            valueInputOption='RAW',
-            body={'values': values},
+            range=f'Hoja 1!A{row_num}:E{row_num}',
+            valueInputOption='USER_ENTERED',
+            body={'values': [[str(user_id), username, '', '', '']]},
+        ).execute()
+        service.spreadsheets().values().update(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f'Hoja 1!H{row_num}',
+            valueInputOption='USER_ENTERED',
+            body={'values': [[now]]},
         ).execute()
         logging.info(f"Usuario registrado en Sheets: {username} ({user_id})")
     except FileNotFoundError:
@@ -262,11 +284,18 @@ def _registrar_ingreso_sync(user_id: int, username: str) -> None:
                     body={'values': [[now]]},
                 ).execute()
                 return
-        service.spreadsheets().values().append(
+        row_num = len(data) + 1
+        service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='Hoja 1!A:I',
-            valueInputOption='RAW',
-            body={'values': [[user_id, username, '', '', '', '', '', now, now]]},
+            range=f'Hoja 1!A{row_num}:E{row_num}',
+            valueInputOption='USER_ENTERED',
+            body={'values': [[str(user_id), username, '', '', '']]},
+        ).execute()
+        service.spreadsheets().values().update(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f'Hoja 1!H{row_num}:I{row_num}',
+            valueInputOption='USER_ENTERED',
+            body={'values': [[now, now]]},
         ).execute()
         logging.info(f"Ingreso registrado: {username} ({user_id})")
     except Exception as e:
@@ -429,11 +458,13 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
             return
         old_status = old.status
         new_status = new.status
-        if new_status in ('left', 'kicked') and old_status in ('member', 'administrator', 'restricted'):
-            await registrar_salida(new.user.id)
-            logging.info(f"Salida detectada via ChatMemberHandler: {new.user.id}")
+        logging.info(f"ChatMember update: user={new.user.id} old={old_status} new={new_status}")
+        if new_status in ('left', 'kicked') and old_status != new_status:
+            if old_status in ('member', 'administrator', 'restricted'):
+                await registrar_salida(new.user.id)
+                logging.info(f"Salida detectada via ChatMemberHandler: {new.user.id}")
             return
-        if new_status in ('member', 'administrator') and old_status in ('left', 'kicked', 'restricted'):
+        if new_status in ('member', 'administrator') and old_status not in ('member', 'administrator'):
             user = new.user
             text = _bienvenida(user)
             try:
@@ -648,89 +679,63 @@ def _find_all_folders(name):
             break
     return folders
 
-def _extract_model(name):
-    parts = name.split(" DriveVIPclub")
-    return parts[0].strip() if len(parts) > 1 else "Otros"
-
-def _group_by_model(files):
-    groups = {}
-    for f in files:
-        model = _extract_model(f.get("name", ""))
-        groups.setdefault(model, []).append(f)
-    return groups
-
-def _cache_drive_media():
-    logging.info("Scanning Drive: finding Fotos and Videos folders...")
+def _cache_drive_folders():
+    """Lightweight: only cache folder ID lists, not file metadata."""
+    logging.info("Scanning Drive folders...")
     fotos = _find_all_folders("Fotos")
     videos_folders = _find_all_folders("Videos")
-    logging.info(f"Found {len(fotos)} Fotos folders, {len(videos_folders)} Videos folders")
+    logging.info(f"Drive folders cached: {len(fotos)} Fotos, {len(videos_folders)} Videos")
+    return fotos, videos_folders
 
-    all_imgs = []
-    for i, ff in enumerate(fotos):
-        files = _list_folder_files(ff["id"])
-        imgs = [f for f in files if "image" in f.get("mimeType", "")]
-        all_imgs.extend(imgs)
-        if (i + 1) % 50 == 0:
-            logging.info(f"  Scanned {i+1}/{len(fotos)} Fotos folders ({len(all_imgs)} images)")
-
-    all_vids = []
-    for i, vf in enumerate(videos_folders):
-        files = _list_folder_files(vf["id"])
-        small = [f for f in files if "video" in f.get("mimeType", "") and int(f.get("size", 0)) <= 10 * 1024 * 1024]
-        all_vids.extend(small)
-        if (i + 1) % 50 == 0:
-            logging.info(f"  Scanned {i+1}/{len(videos_folders)} Videos folders ({len(all_vids)} videos)")
-
-    imgs_by_model = _group_by_model(all_imgs)
-    vids_by_model = _group_by_model(all_vids)
-    models = sorted(imgs_by_model.keys())
-    logging.info(f"Drive media cached: {len(all_imgs)} images, {len(all_vids)} videos from {len(models)} models")
-    return imgs_by_model, vids_by_model, models
+async def _obtener_media_rotar(pool, idx_key, media_type, loop, bot_data):
+    """Rota por carpetas secuencialmente, busca un archivo no repetido."""
+    pool_size = len(pool)
+    for _ in range(pool_size):
+        idx = bot_data.setdefault(idx_key, 0) % pool_size
+        bot_data[idx_key] = idx + 1
+        folder = pool[idx]
+        files = await loop.run_in_executor(None, _list_folder_files, folder["id"])
+        candidates = [f for f in files if media_type in f.get("mimeType", "")]
+        if media_type == "video":
+            candidates = [f for f in candidates if int(f.get("size", 0)) <= 10 * 1024 * 1024]
+        if not candidates:
+            continue
+        used = bot_data.setdefault('used_images', set())
+        available = [f for f in candidates if f['id'] not in used]
+        if not available:
+            used.clear()
+            available = candidates
+        chosen = random.choice(available)
+        used.add(chosen['id'])
+        return chosen
+    return None
 
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
-    imgs_by = context.bot_data.get('drive_images')
-    vids_by = context.bot_data.get('drive_videos')
-    models = context.bot_data.get('drive_models')
-    if not imgs_by or not vids_by:
+    fotos_folders = context.bot_data.get('fotos_folders')
+    vids_folders = context.bot_data.get('videos_folders')
+    if not fotos_folders:
         loop = asyncio.get_event_loop()
-        imgs_by, vids_by, models = await loop.run_in_executor(None, _cache_drive_media)
-        if not imgs_by:
+        fotos_folders, vids_folders = await loop.run_in_executor(None, _cache_drive_folders)
+        if not fotos_folders:
             return
-        context.bot_data['drive_images'] = imgs_by
-        context.bot_data['drive_videos'] = vids_by
-        context.bot_data['drive_models'] = models
-    # Rotate models
-    model_idx = context.bot_data.setdefault('model_idx', 0)
-    model_idx = model_idx % len(models)
-    context.bot_data['model_idx'] = model_idx + 1
-    current_model = models[model_idx]
-    # Decide type: 70% image, 30% video (if videos available)
-    use_video = vids_by and random.random() < 0.3
-    pool_by = vids_by if use_video else imgs_by
-    pool = pool_by.get(current_model, [])
-    if not pool:
-        for m in models:
-            if m == current_model:
-                continue
-            pool = pool_by.get(m, [])
-            if pool:
-                break
-    if not pool:
-        all_files = [f for lst in pool_by.values() for f in lst]
-        pool = all_files
-    used = context.bot_data.setdefault('used_images', set())
-    available = [f for f in pool if f['id'] not in used]
-    if not available:
-        used.clear()
-        available = pool
-    chosen = random.choice(available)
-    used.add(chosen['id'])
+        context.bot_data['fotos_folders'] = fotos_folders
+        context.bot_data['videos_folders'] = vids_folders
+    loop = asyncio.get_event_loop()
+    # 70% image, 30% video
+    use_video = vids_folders and random.random() < 0.3
+    chosen = None
+    if use_video:
+        chosen = await _obtener_media_rotar(vids_folders, 'vids_folder_idx', 'video', loop, context.bot_data)
+    if not chosen:
+        chosen = await _obtener_media_rotar(fotos_folders, 'fotos_folder_idx', 'image', loop, context.bot_data)
+    if not chosen:
+        return
     caption = random.choice(CAPTIONS_SAMPLES)
     for k, v in STATS.items():
         caption = caption.replace('{' + k + '}', v)
     try:
         drive = _get_drive_service()
-        data = await asyncio.get_event_loop().run_in_executor(None, lambda: drive.files().get_media(fileId=chosen['id']).execute())
+        data = await loop.run_in_executor(None, lambda: drive.files().get_media(fileId=chosen['id']).execute())
         from io import BytesIO
         is_vid = chosen.get('mimeType', '').startswith('video/')
         generic = f"muestra.{'mp4' if is_vid else 'jpg'}"
@@ -750,7 +755,6 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.info(f"Muestra publicada ({len(context.bot_data['today_posts'])} hoy)")
     except Exception as e:
         logging.error(f"Error publicando muestra: {e}")
-        used.discard(chosen['id'])
 
 async def limpiar_dia(context: ContextTypes.DEFAULT_TYPE) -> None:
     mids = context.bot_data.get('today_posts', set())
@@ -801,7 +805,17 @@ async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 PORT = int(os.getenv('PORT', '10000'))
 
+_BOT_INSTANCE = None
+
+def _get_bot():
+    global _BOT_INSTANCE
+    if _BOT_INSTANCE is None:
+        from telegram import Bot
+        _BOT_INSTANCE = Bot(TELEGRAM_BOT_TOKEN)
+    return _BOT_INSTANCE
+
 def _poll_payments():
+    bot = _get_bot()
     while True:
         try:
             params = urllib.parse.urlencode({"status": "approved", "sort": "date_created", "criteria": "desc", "limit": 20})
@@ -828,16 +842,14 @@ def _poll_payments():
                 _actualizar_sheet_sync(user_id, 'E', hoy)
                 PROCESSED_PAYMENTS.add(pid)
                 logging.info(f"Pago aprobado para usuario {user_id}, plan {plan} (renovacion={tiene_plan})")
-                from telegram import Bot
-                bot_instance = Bot(TELEGRAM_BOT_TOKEN)
                 if not tiene_plan:
                     PENDING_GMAIL[user_id] = True
-                    bot_instance.send_message(
+                    bot.send_message(
                         chat_id=user_id,
                         text="✅ ¡Pago confirmado! Ahora envíame tu correo Gmail para darte acceso al Drive."
                     )
                 else:
-                    bot_instance.send_message(
+                    bot.send_message(
                         chat_id=user_id,
                         text=f"✅ ¡Pago recibido! Tu membresía {plan} se ha extendido desde hoy ({hoy}). ¡Disfruta!"
                     )
@@ -868,7 +880,8 @@ def _self_ping():
     url = 'https://drivevipclub.onrender.com/'
     while True:
         try:
-            urllib.request.urlopen(url, timeout=10)
+            with urllib.request.urlopen(url, timeout=10):
+                pass
         except:
             pass
         threading.Event().wait(600)
@@ -979,14 +992,20 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     msg = await update.message.reply_text("Probando conexion con Drive...")
     try:
         loop = asyncio.get_event_loop()
-        imgs, vids, models = await loop.run_in_executor(None, _cache_drive_media)
-        total_imgs = sum(len(v) for v in imgs.values())
-        total_vids = sum(len(v) for v in vids.values())
+        fotos, vids = await loop.run_in_executor(None, _cache_drive_folders)
+        total_imgs = 0
+        total_vids = 0
+        for f in fotos:
+            files = await loop.run_in_executor(None, _list_folder_files, f["id"])
+            total_imgs += sum(1 for x in files if "image" in x.get("mimeType", ""))
+        for v in vids:
+            files = await loop.run_in_executor(None, _list_folder_files, v["id"])
+            total_vids += sum(1 for x in files if "video" in x.get("mimeType", "") and int(x.get("size", 0)) <= 10 * 1024 * 1024)
         await msg.edit_text(
             f"Drive OK\n\nImagenes: {total_imgs}\n"
             f"Videos <=10MB: {total_vids}\n"
-            f"Modelos: {len(models)}\n\n"
-            f"Primer modelo: {models[0] if models else 'N/A'}"
+            f"Carpetas Fotos: {len(fotos)}\n"
+            f"Carpetas Videos: {len(vids)}"
         )
     except Exception as e:
         await msg.edit_text(f"Error: {e}\n\nRevisa GOOGLE_SERVICE_ACCOUNT_JSON en Render")
