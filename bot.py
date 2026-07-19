@@ -444,7 +444,6 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logging.error(f"Error enviando mensaje al canal: {e}")
 
-SAMPLES_DIRS = ['samples', '.']
 CAPTIONS_SAMPLES = [
     "\U0001F4F7 Sample exclusivo de nuestro contenido.\n{carpetas} modelos \u2022 {videos} videos \u2022 +1TB\n\n\U0001F447 Quieres ver mas? @DriveVIPclubBot",
     "\U0001F525 Esto es solo una muestra.\nTenemos {carpetas} modelos organizados A-Z.\n\n\U0001F447 Accede hoy: @DriveVIPclubBot",
@@ -454,25 +453,62 @@ CAPTIONS_SAMPLES = [
     "\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: @DriveVIPclubBot",
 ]
 
+def _list_drive_images():
+    try:
+        drive = _get_drive_service()
+        all_files = []
+        page_token = None
+        while True:
+            r = drive.files().list(
+                q="mimeType contains 'image/'",
+                fields="files(id,name,size)",
+                pageSize=200,
+                pageToken=page_token,
+                orderBy="name"
+            ).execute()
+            all_files.extend(r.get("files", []))
+            page_token = r.get("nextPageToken")
+            if not page_token:
+                break
+        logging.info(f"Drive images cached: {len(all_files)}")
+        return all_files
+    except Exception as e:
+        logging.error(f"Error listing drive images: {e}")
+        return []
+
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
-    import glob
-    candidates = []
-    for d in SAMPLES_DIRS:
-        if os.path.isdir(d):
-            candidates.extend(glob.glob(os.path.join(d, '*.png')) + glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.jpeg')))
-    if not candidates:
-        return
-    random.shuffle(candidates)
-    img_path = candidates[0]
+    imgs = context.bot_data.get('drive_images')
+    if not imgs:
+        loop = asyncio.get_event_loop()
+        imgs = await loop.run_in_executor(None, _list_drive_images)
+        if not imgs:
+            return
+        context.bot_data['drive_images'] = imgs
+    used = context.bot_data.setdefault('used_images', set())
+    available = [i for i in imgs if i['id'] not in used]
+    if not available:
+        used.clear()
+        available = imgs
+    chosen = random.choice(available)
+    used.add(chosen['id'])
     caption = random.choice(CAPTIONS_SAMPLES)
     for k, v in STATS.items():
         caption = caption.replace('{' + k + '}', v)
     try:
-        with open(img_path, 'rb') as f:
-            msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=InputFile(f), caption=caption)
+        drive = _get_drive_service()
+        img_bytes = drive.files().get_media(fileId=chosen['id']).execute()
+        from io import BytesIO
+        msg = await context.bot.send_photo(
+            chat_id=CHANNEL_ID,
+            photo=InputFile(BytesIO(img_bytes), filename=chosen['name']),
+            caption=caption
+        )
         context.application.create_task(eliminar_mensaje(msg, 3600))
+        logging.info(f"Muestra publicada: {chosen['name']} ({len(used)}/{len(imgs)})")
     except Exception as e:
-        logging.error(f"Error publicando muestra al canal: {e}")
+        logging.error(f"Error publicando muestra: {e}")
+        # Remove from used on error so we try another next time
+        used.discard(chosen['id'])
 
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
