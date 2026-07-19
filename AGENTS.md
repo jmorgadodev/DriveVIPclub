@@ -23,8 +23,8 @@
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
-8. mensaje_automatico publica en horarios fijos: 00:00, 08:00, 12:00, 16:00, 20:00 Chile (~50% con IMAGEN_RECORDATORIO, borrar 4h)
-9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 2h)
+8. mensaje_automatico publica a las 09:00, 14:00 y 20:00 Chile (~50% con IMAGEN_RECORDATORIO, borrar 3h)
+9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min)
 10. verificar_proximos_vencer a las 10:00 AM avisa usuarios que expiran mañana
 11. Stats dinámicos se cargan desde el listado sheet al inicio y se refrescan 6:00/18:00
 
@@ -64,10 +64,10 @@
 - ID: -1004398583245
 - Bot es admin, puede publicar
 - Descripcion con link al grupo y bot, foto puesta
-- Auto-posts programados: 9:00, 13:00, 18:00, 21:00 Chile
+- Auto-posts programados: 10:00, 15:00 y 20:00 Chile; borrar 3h
 - CANAL_TEXTS rotan 5 variantes con stats y CTA al bot
 - Primeros posts de bienvenida fijados en el canal
-- publicar_muestra(): 1 media/hora desde Drive, auto-borrado 3600s
+- publicar_muestra(): 1 media cada 2h de 09:05 a 23:05 Chile, borrar 3h
   - Carga imágenes (~1028) y videos ≤10MB (~101) vía API Drive (paginación 200), cachea en bot_data
   - 70% foto / 30% video aleatorio
   - Lleva set `used_images` para no repetir; cuando agota, reinicia

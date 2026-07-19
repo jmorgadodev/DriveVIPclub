@@ -75,7 +75,7 @@ LISTADO_URL = (
     "1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k/edit?gid=0#gid=0"
 )
 WELCOME_DELETE_SECONDS = 15 * 60
-LISTADO_INTERVAL_SECONDS = 3 * 60 * 60
+SCHEDULED_DELETE_SECONDS = 3 * 60 * 60
 
 
 def _execute_sheets(request):
@@ -622,7 +622,6 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
                         caption=text,
                     )
                 context.bot_data['last_promo_img'] = now
-                context.application.create_task(eliminar_mensaje(message, 14400))
             except Exception:
                 message = await context.bot.send_message(
                     chat_id=PUBLIC_GROUP_ID,
@@ -633,6 +632,9 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=PUBLIC_GROUP_ID,
                 text=text,
             )
+        context.application.create_task(
+            eliminar_mensaje(message, SCHEDULED_DELETE_SECONDS)
+        )
         pm_ids = context.bot_data.setdefault('promo_message_ids', set())
         pm_ids.add(message.message_id)
         _trim_set(pm_ids, 500)
@@ -655,7 +657,7 @@ async def mensaje_listado(context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
         context.application.create_task(
-            eliminar_mensaje(message, LISTADO_INTERVAL_SECONDS)
+            eliminar_mensaje(message, SCHEDULED_DELETE_SECONDS)
         )
     except Exception as e:
         logging.error(f"Error enviando mensaje del listado: {e}")
@@ -676,12 +678,15 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
         text = text.replace('{' + k + '}', v)
     context.bot_data['canal_idx'] = idx + 1
     try:
-        await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+        message = await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+        context.application.create_task(
+            eliminar_mensaje(message, SCHEDULED_DELETE_SECONDS)
+        )
     except Exception as e:
         logging.error(f"Error enviando mensaje al canal: {e}")
 
 CAPTIONS_SAMPLES = [
-    f"\U0001F4F7 Sample exclusivo de nuestro contenido.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 +1TB\n\n\U0001F447 Quieres ver mas? {GROUP_LINK}",
+    f"\U0001F4F7 Sample exclusivo de nuestro contenido.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{tamano}}\n\n\U0001F447 Quieres ver mas? {GROUP_LINK}",
     f"\U0001F525 Esto es solo una muestra.\nTenemos {{carpetas}} modelos organizados A-Z.\n\n\U0001F447 Accede hoy: {GROUP_LINK}",
     f"\U0001F48E Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\U0001F447 Habla con nosotros: {GROUP_LINK}",
     f"\U0001F4CA Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Info: {GROUP_LINK}",
@@ -798,6 +803,9 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 caption=caption
             )
         context.bot_data.setdefault('today_posts', set()).add(msg.message_id)
+        context.application.create_task(
+            eliminar_mensaje(msg, SCHEDULED_DELETE_SECONDS)
+        )
         logging.info(f"Muestra publicada ({len(context.bot_data['today_posts'])} hoy)")
     except Exception as e:
         logging.error(f"Error publicando muestra: {e}")
@@ -1138,14 +1146,14 @@ def main() -> None:
         first=5,
         name='poll_payments',
     )
-    for hour, key in ((0, 'auto_00'), (8, 'auto_08'), (12, 'auto_12'), (16, 'auto_16'), (20, 'auto_20')):
+    for hour, key in ((9, 'auto_08'), (14, 'auto_16'), (20, 'auto_20')):
         job_queue.run_daily(
             mensaje_automatico,
             time=time(hour, 0, tzinfo=TZ),
             data=key,
             name=key,
         )
-    for hour in range(0, 24, 3):
+    for hour in (11, 17, 22):
         job_queue.run_daily(
             mensaje_listado,
             time=time(hour, 15, tzinfo=TZ),
@@ -1153,18 +1161,14 @@ def main() -> None:
         )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
-    for hour in (9, 13, 18, 21):
+    for hour in (10, 15, 20):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
-    now = datetime.now(TZ)
-    next_sample = now.replace(minute=5, second=0, microsecond=0)
-    if next_sample <= now:
-        next_sample += timedelta(hours=1)
-    job_queue.run_repeating(
-        publicar_muestra,
-        interval=3600,
-        first=next_sample,
-        name='muestra_1h',
-    )
+    for hour in range(9, 24, 2):
+        job_queue.run_daily(
+            publicar_muestra,
+            time=time(hour, 5, tzinfo=TZ),
+            name=f'muestra_{hour}',
+        )
     job_queue.run_daily(limpiar_dia, time=time(0, 0, tzinfo=TZ), name='limpieza_diaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
