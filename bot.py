@@ -32,6 +32,7 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     level=logging.INFO,
 )
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 from config import (
     TELEGRAM_BOT_TOKEN,
@@ -62,6 +63,20 @@ _SHEETS_SERVICE = None
 _DRIVE_SERVICE = None
 _SHEETS_LOCK = threading.Lock()
 _DRIVE_LOCK = threading.Lock()
+_SHEETS_API_LOCK = threading.Lock()
+_DRIVE_API_LOCK = threading.Lock()
+
+WELCOME_IMAGE_URL = "https://raw.githubusercontent.com/jmorgadodev/DriveVIPclub/master/bienvenida.png"
+
+
+def _execute_sheets(request):
+    with _SHEETS_API_LOCK:
+        return request.execute()
+
+
+def _execute_drive(request):
+    with _DRIVE_API_LOCK:
+        return request.execute()
 
 def _get_sheets_service():
     global _SHEETS_SERVICE
@@ -79,7 +94,7 @@ def _get_sheets_service():
                 creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
             else:
                 creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
-            _SHEETS_SERVICE = build('sheets', 'v4', credentials=creds)
+            _SHEETS_SERVICE = build('sheets', 'v4', credentials=creds, cache_discovery=False)
     return _SHEETS_SERVICE
 
 def _get_drive_service():
@@ -108,17 +123,17 @@ def _get_drive_service():
                 creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
             else:
                 creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
-            _DRIVE_SERVICE = build('drive', 'v3', credentials=creds)
+            _DRIVE_SERVICE = build('drive', 'v3', credentials=creds, cache_discovery=False)
     return _DRIVE_SERVICE
 
 def _compartir_drive_sync(email: str) -> bool:
     try:
         drive = _get_drive_service()
-        drive.permissions().create(
+        _execute_drive(drive.permissions().create(
             fileId=DRIVE_FOLDER_ID,
             body={'type': 'user', 'role': 'reader', 'emailAddress': email},
             sendNotificationEmail=False
-        ).execute()
+        ))
         logging.info(f"Drive compartido con {email}")
         return True
     except Exception as e:
@@ -128,10 +143,14 @@ def _compartir_drive_sync(email: str) -> bool:
 def _revocar_drive_sync(email: str) -> bool:
     try:
         drive = _get_drive_service()
-        perms = drive.permissions().list(fileId=DRIVE_FOLDER_ID, fields='permissions(id,emailAddress)').execute()
+        perms = _execute_drive(drive.permissions().list(
+            fileId=DRIVE_FOLDER_ID, fields='permissions(id,emailAddress)'
+        ))
         for p in perms.get('permissions', []):
             if p.get('emailAddress') == email:
-                drive.permissions().delete(fileId=DRIVE_FOLDER_ID, permissionId=p['id']).execute()
+                _execute_drive(drive.permissions().delete(
+                    fileId=DRIVE_FOLDER_ID, permissionId=p['id']
+                ))
                 logging.info(f"Acceso revocado a {email}")
                 return True
         return False
@@ -142,19 +161,19 @@ def _revocar_drive_sync(email: str) -> bool:
 def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
     try:
         service = _get_sheets_service()
-        rows = service.spreadsheets().values().get(
+        rows = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        ).execute()
+        ))
         vals = rows.get('values', [])
         for i, row in enumerate(vals):
             if row and row[0] == str(user_id):
                 cell_range = f"'Hoja 1'!{col_letter}{i+1}"
-                service.spreadsheets().values().update(
+                _execute_sheets(service.spreadsheets().values().update(
                     spreadsheetId=GOOGLE_SHEET_ID,
                     range=cell_range,
                     valueInputOption='RAW',
                     body={'values': [[value]]}
-                ).execute()
+                ))
                 return True
     except Exception as e:
         logging.error(f"Error actualizando Sheet para {user_id}: {e}")
@@ -163,9 +182,9 @@ def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
 def _tiene_plan_sync(user_id: int) -> bool:
     try:
         service = _get_sheets_service()
-        rows = service.spreadsheets().values().get(
+        rows = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:D'
-        ).execute()
+        ))
         for row in rows.get('values', []):
             if row and row[0] == str(user_id) and len(row) > 3 and row[3]:
                 return True
@@ -177,9 +196,9 @@ def _cargar_mensajes_sync():
     global MENSAJES
     try:
         service = _get_sheets_service()
-        result = service.spreadsheets().values().get(
+        result = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID, range=MENSAJES_SHEET_RANGE
-        ).execute()
+        ))
         rows = result.get('values', [])
         raw = {}
         for row in rows[1:]:
@@ -197,9 +216,9 @@ def _cargar_stats_listado_sync():
         return
     try:
         service = _get_sheets_service()
-        result = service.spreadsheets().values().get(
+        result = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=LISTADO_SHEET_ID, range='A:F'
-        ).execute()
+        ))
         rows = result.get('values', [])
         carpetas = max(0, len(rows) - 1)
         videos = 0
@@ -231,25 +250,25 @@ TZ = ZoneInfo("America/Santiago")
 def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
         service = _get_sheets_service()
-        existing = service.spreadsheets().values().get(
+        existing = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        ).execute().get('values', [])
+        )).get('values', [])
         if any(row and row[0] == str(user_id) for row in existing[1:]):
             return
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         row_num = len(existing) + 1
-        service.spreadsheets().values().update(
+        _execute_sheets(service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'Hoja 1!A{row_num}:E{row_num}',
             valueInputOption='USER_ENTERED',
             body={'values': [[str(user_id), username, '', '', '']]},
-        ).execute()
-        service.spreadsheets().values().update(
+        ))
+        _execute_sheets(service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'Hoja 1!H{row_num}',
             valueInputOption='USER_ENTERED',
             body={'values': [[now]]},
-        ).execute()
+        ))
         logging.info(f"Usuario registrado en Sheets: {username} ({user_id})")
     except FileNotFoundError:
         logging.warning("Archivo de credenciales no encontrado — registro en Sheets omitido.")
@@ -271,32 +290,32 @@ async def registrar_salida(user_id: int) -> None:
 def _registrar_ingreso_sync(user_id: int, username: str) -> None:
     try:
         service = _get_sheets_service()
-        data = service.spreadsheets().values().get(
+        data = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        ).execute().get('values', [])
+        )).get('values', [])
         now = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
         for i, row in enumerate(data):
             if row and row[0] == str(user_id):
-                service.spreadsheets().values().update(
+                _execute_sheets(service.spreadsheets().values().update(
                     spreadsheetId=GOOGLE_SHEET_ID,
                     range=f'Hoja 1!I{i+1}',
                     valueInputOption='RAW',
                     body={'values': [[now]]},
-                ).execute()
+                ))
                 return
         row_num = len(data) + 1
-        service.spreadsheets().values().update(
+        _execute_sheets(service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'Hoja 1!A{row_num}:E{row_num}',
             valueInputOption='USER_ENTERED',
             body={'values': [[str(user_id), username, '', '', '']]},
-        ).execute()
-        service.spreadsheets().values().update(
+        ))
+        _execute_sheets(service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'Hoja 1!H{row_num}:I{row_num}',
             valueInputOption='USER_ENTERED',
             body={'values': [[now, now]]},
-        ).execute()
+        ))
         logging.info(f"Ingreso registrado: {username} ({user_id})")
     except Exception as e:
         logging.error(f"Error registrando ingreso: {e}")
@@ -304,18 +323,18 @@ def _registrar_ingreso_sync(user_id: int, username: str) -> None:
 def _registrar_salida_sync(user_id: int) -> None:
     try:
         service = _get_sheets_service()
-        data = service.spreadsheets().values().get(
+        data = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        ).execute().get('values', [])
+        )).get('values', [])
         now = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
         for i, row in enumerate(data):
             if row and row[0] == str(user_id):
-                service.spreadsheets().values().update(
+                _execute_sheets(service.spreadsheets().values().update(
                     spreadsheetId=GOOGLE_SHEET_ID,
                     range=f'Hoja 1!J{i+1}',
                     valueInputOption='RAW',
                     body={'values': [[now]]},
-                ).execute()
+                ))
                 logging.info(f"Salida registrada: {user_id}")
                 return
     except Exception as e:
@@ -334,7 +353,7 @@ def _bienvenida(user):
         m('bienvenida').format(user=name) +
         "\n\n📺 ANTES DE IRTE...\n\n"
         "Tenemos un CANAL con AVANCES REALES del contenido.\n"
-        "Muestras en video y foto actualizadas cada 30 min.\n\n"
+        "Muestras en video y foto actualizadas cada 1 hora.\n\n"
         "✅ Ve la calidad REAL antes de pagar\n"
         "✅ Contenido auténtico, no capturas editadas\n"
         "✅ Decide con muestras en vivo\n\n"
@@ -351,13 +370,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         if not user or not update.message:
             return
-        text = _bienvenida(user)
-        if os.path.exists('bienvenida.png'):
-            with open('bienvenida.png', 'rb') as f:
-                msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
-        else:
-            msg = await update.message.reply_text(text, parse_mode='HTML')
         await registrar_usuario(user.id, user.username or 'sin_username')
+        msg = await _enviar_mensaje_bienvenida(
+            context, update.effective_chat.id, _bienvenida(user)
+        )
         context.application.create_task(eliminar_mensaje(msg, 7200))
     except Exception as e:
         logging.error(f"Error en start: {e}")
@@ -397,53 +413,13 @@ async def ventajas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text(text)
 
-async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        chat = update.effective_chat
-        if not chat:
-            logging.warning("nuevo_miembro sin effective_chat")
-            return
-        if not update.message or not update.message.new_chat_members:
-            logging.warning("nuevo_miembro sin message o new_chat_members")
-            return
-        for user in update.message.new_chat_members:
-            if user.is_bot:
-                continue
-            await registrar_usuario(user.id, user.username or 'sin_username')
-            await registrar_ingreso(user.id, user.username or 'sin_username')
-            try:
-                if os.path.exists('bienvenida.png'):
-                    with open('bienvenida.png', 'rb') as f:
-                        msg = await update.message.reply_photo(photo=InputFile(f), caption=_bienvenida(user), parse_mode='HTML')
-                else:
-                    msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
-                context.application.create_task(eliminar_mensaje(msg, 14400))
-            except Exception as e:
-                logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
-    except Exception as e:
-        logging.error(f"Error en nuevo_miembro: {e}")
-
-async def _salida_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        if not update.message or not update.message.left_chat_member:
-            return
-        user = update.message.left_chat_member
-        if user.is_bot:
-            return
-        await registrar_salida(user.id)
-        logging.info(f"Salida detectada via MessageHandler: {user.id}")
-    except Exception as e:
-        logging.error(f"Error en _salida_miembro: {e}")
-
-async def _enviar_mensaje_bienvenida(context, chat_id, user, text):
-    """Envía bienvenida con foto o texto."""
-    if os.path.exists('bienvenida.png'):
-        with open('bienvenida.png', 'rb') as f:
-            return await context.bot.send_photo(
-                chat_id=chat_id, photo=InputFile(f), caption=text, parse_mode='HTML'
-            )
-    return await context.bot.send_message(
-        chat_id=chat_id, text=text, parse_mode='HTML'
+async def _enviar_mensaje_bienvenida(context, chat_id, text):
+    """Envía la foto por URL para no cargar el archivo en la RAM de Render."""
+    return await context.bot.send_photo(
+        chat_id=chat_id,
+        photo=WELCOME_IMAGE_URL,
+        caption=text,
+        parse_mode='HTML',
     )
 
 async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -470,10 +446,9 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
             return
         if new_status in ('member', 'administrator') and old_status not in ('member', 'administrator'):
             user = new.user
-            await registrar_usuario(user.id, user.username or 'sin_username')
             await registrar_ingreso(user.id, user.username or 'sin_username')
             try:
-                msg = await _enviar_mensaje_bienvenida(context, chat.id, user, _bienvenida(user))
+                msg = await _enviar_mensaje_bienvenida(context, chat.id, _bienvenida(user))
                 context.application.create_task(eliminar_mensaje(msg, 14400))
             except Exception as e:
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
@@ -631,13 +606,13 @@ def _list_folder_files(folder_id, fields="files(id,name,size,mimeType)"):
     results = []
     pt = None
     while True:
-        r = drive.files().list(
+        r = _execute_drive(drive.files().list(
             q=f"'{folder_id}' in parents",
             fields=fields,
             pageSize=200,
             pageToken=pt,
             orderBy="name"
-        ).execute()
+        ))
         results.extend(r.get("files", []))
         pt = r.get("nextPageToken")
         if not pt:
@@ -650,12 +625,12 @@ def _find_all_folders(name):
     folders = []
     pt = None
     while True:
-        r = drive.files().list(
+        r = _execute_drive(drive.files().list(
             q=f"name='{name}' and mimeType='application/vnd.google-apps.folder'",
             fields="files(id)",
             pageSize=200,
             pageToken=pt
-        ).execute()
+        ))
         folders.extend(r.get("files", []))
         pt = r.get("nextPageToken")
         if not pt:
@@ -715,7 +690,10 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         caption = caption.replace('{' + k + '}', v)
     try:
         drive = _get_drive_service()
-        data = await loop.run_in_executor(None, lambda: drive.files().get_media(fileId=chosen['id']).execute())
+        data = await loop.run_in_executor(
+            None,
+            lambda: _execute_drive(drive.files().get_media(fileId=chosen['id']))
+        )
         from io import BytesIO
         is_vid = chosen.get('mimeType', '').startswith('video/')
         generic = f"muestra.{'mp4' if is_vid else 'jpg'}"
@@ -887,9 +865,9 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
         service = await loop.run_in_executor(None, _get_sheets_service)
         rows = await loop.run_in_executor(
             None,
-            lambda: service.spreadsheets().values().get(
+            lambda: _execute_sheets(service.spreadsheets().values().get(
                 spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
-            ).execute()
+            ))
         )
         rows = rows.get('values', [])
         for row in rows[1:]:
@@ -928,9 +906,9 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
         service = await loop.run_in_executor(None, _get_sheets_service)
         rows = await loop.run_in_executor(
             None,
-            lambda: service.spreadsheets().values().get(
+            lambda: _execute_sheets(service.spreadsheets().values().get(
                 spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
-            ).execute()
+            ))
         )
         rows = rows.get('values', [])
         hoy = datetime.now().date()
@@ -1019,12 +997,6 @@ def main() -> None:
     application.add_handler(CommandHandler("lista",    lista))
     application.add_handler(CommandHandler("ventajas", ventajas))
     application.add_handler(CommandHandler("testdrive", test_drive))
-    application.add_handler(
-        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
-    )
-    application.add_handler(
-        MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, _salida_miembro)
-    )
     application.add_handler(
         ChatMemberHandler(_bienvenida_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER)
     )
