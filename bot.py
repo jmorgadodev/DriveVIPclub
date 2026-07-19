@@ -330,7 +330,16 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
 
 def _bienvenida(user):
     name = user.mention_html() if user.username else user.first_name or 'Usuario'
-    return m('bienvenida').format(user=name)
+    return (
+        m('bienvenida').format(user=name) +
+        "\n\n📺 ANTES DE IRTE...\n\n"
+        "Tenemos un CANAL con AVANCES REALES del contenido.\n"
+        "Muestras en video y foto actualizadas cada 30 min.\n\n"
+        "✅ Ve la calidad REAL antes de pagar\n"
+        "✅ Contenido auténtico, no capturas editadas\n"
+        "✅ Decide con muestras en vivo\n\n"
+        "👉 @DriveVIPclub"
+    )
 
 def _solo_privado(update: Update) -> bool:
     return update.effective_chat and update.effective_chat.type == 'private'
@@ -408,23 +417,9 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         msg = await update.message.reply_photo(photo=InputFile(f), caption=_bienvenida(user), parse_mode='HTML')
                 else:
                     msg = await update.message.reply_text(_bienvenida(user), parse_mode='HTML')
-                context.application.create_task(eliminar_mensaje(msg, 7200))
+                context.application.create_task(eliminar_mensaje(msg, 14400))
             except Exception as e:
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
-            try:
-                chan_msg = await update.message.reply_text(
-                    f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
-                    "Tenemos un CANAL con AVANCES REALES del contenido.\n"
-                    "Muestras en video y foto actualizadas cada 30 min.\n\n"
-                    "✅ Ve la calidad REAL antes de pagar\n"
-                    "✅ Contenido auténtico, no capturas editadas\n"
-                    "✅ Decide con muestras en vivo\n\n"
-                    "👉 @DriveVIPclub",
-                    parse_mode='HTML'
-                )
-                context.application.create_task(eliminar_mensaje(chan_msg, 14400))
-            except Exception as e:
-                logging.error(f"Error enviando 'ANTES DE IRTE' a {user.id} en {chat.id}: {e}")
     except Exception as e:
         logging.error(f"Error en nuevo_miembro: {e}")
 
@@ -449,22 +444,6 @@ async def _enviar_mensaje_bienvenida(context, chat_id, user, text):
             )
     return await context.bot.send_message(
         chat_id=chat_id, text=text, parse_mode='HTML'
-    )
-
-async def _enviar_promo_canal(context, chat_id, user):
-    """Envía el mensaje 'ANTES DE IRTE' promocionando el canal."""
-    return await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
-            "Tenemos un CANAL con AVANCES REALES del contenido.\n"
-            "Muestras en video y foto actualizadas cada 30 min.\n\n"
-            "✅ Ve la calidad REAL antes de pagar\n"
-            "✅ Contenido auténtico, no capturas editadas\n"
-            "✅ Decide con muestras en vivo\n\n"
-            "👉 @DriveVIPclub"
-        ),
-        parse_mode='HTML'
     )
 
 async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -495,14 +474,9 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
             await registrar_ingreso(user.id, user.username or 'sin_username')
             try:
                 msg = await _enviar_mensaje_bienvenida(context, chat.id, user, _bienvenida(user))
-                context.application.create_task(eliminar_mensaje(msg, 7200))
+                context.application.create_task(eliminar_mensaje(msg, 14400))
             except Exception as e:
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
-            try:
-                chan_msg = await _enviar_promo_canal(context, chat.id, user)
-                context.application.create_task(eliminar_mensaje(chan_msg, 14400))
-            except Exception as e:
-                logging.error(f"Error enviando promo canal a {user.id} en {chat.id}: {e}")
     except Exception as e:
         logging.error(f"Error en _bienvenida_chat_member: {e}")
 
