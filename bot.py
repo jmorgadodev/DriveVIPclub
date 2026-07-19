@@ -7,6 +7,7 @@ import threading
 import urllib.request
 import urllib.parse
 from datetime import datetime, time
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import socket
 try:
@@ -65,6 +66,7 @@ _SHEETS_LOCK = threading.Lock()
 _DRIVE_LOCK = threading.Lock()
 _SHEETS_API_LOCK = threading.Lock()
 _DRIVE_API_LOCK = threading.Lock()
+_GOOGLE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='google-api')
 
 WELCOME_IMAGE_URL = "https://raw.githubusercontent.com/jmorgadodev/DriveVIPclub/master/bienvenida.png"
 
@@ -77,6 +79,10 @@ def _execute_sheets(request):
 def _execute_drive(request):
     with _DRIVE_API_LOCK:
         return request.execute()
+
+
+def _run_google_sync(func, *args):
+    return _GOOGLE_EXECUTOR.submit(func, *args).result()
 
 def _get_sheets_service():
     global _SHEETS_SERVICE
@@ -277,15 +283,15 @@ def _registrar_usuario_sync(user_id: int, username: str) -> None:
 
 async def registrar_usuario(user_id: int, username: str) -> None:
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, partial(_registrar_usuario_sync, user_id, username))
+    await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_usuario_sync, user_id, username))
 
 async def registrar_ingreso(user_id: int, username: str) -> None:
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, partial(_registrar_ingreso_sync, user_id, username))
+    await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_ingreso_sync, user_id, username))
 
 async def registrar_salida(user_id: int) -> None:
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, partial(_registrar_salida_sync, user_id))
+    await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_salida_sync, user_id))
 
 def _registrar_ingreso_sync(user_id: int, username: str) -> None:
     try:
@@ -521,8 +527,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("❌ Eso no parece un Gmail válido. Envíame tu correo electrónico (ej: usuario@gmail.com)")
             return
         loop = asyncio.get_event_loop()
-        ok = await loop.run_in_executor(None, _compartir_drive_sync, text)
-        await loop.run_in_executor(None, _actualizar_sheet_sync, user.id, 'C', text)
+        ok = await loop.run_in_executor(_GOOGLE_EXECUTOR, _compartir_drive_sync, text)
+        await loop.run_in_executor(_GOOGLE_EXECUTOR, _actualizar_sheet_sync, user.id, 'C', text)
         if ok:
             del PENDING_GMAIL[user.id]
             if os.path.exists('demo_drive.png'):
@@ -652,7 +658,7 @@ async def _obtener_media_rotar(pool, idx_key, media_type, loop, bot_data):
         idx = bot_data.setdefault(idx_key, 0) % pool_size
         bot_data[idx_key] = idx + 1
         folder = pool[idx]
-        files = await loop.run_in_executor(None, _list_folder_files, folder["id"])
+        files = await loop.run_in_executor(_GOOGLE_EXECUTOR, _list_folder_files, folder["id"])
         candidates = [f for f in files if media_type in f.get("mimeType", "")]
         if media_type == "video":
             candidates = [f for f in candidates if int(f.get("size", 0)) <= 10 * 1024 * 1024]
@@ -670,7 +676,7 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
     vids_folders = context.bot_data.get('videos_folders')
     if not fotos_folders:
         loop = asyncio.get_event_loop()
-        fotos_folders, vids_folders = await loop.run_in_executor(None, _cache_drive_folders)
+        fotos_folders, vids_folders = await loop.run_in_executor(_GOOGLE_EXECUTOR, _cache_drive_folders)
         if not fotos_folders:
             return
         context.bot_data['fotos_folders'] = fotos_folders
@@ -691,7 +697,7 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         drive = _get_drive_service()
         data = await loop.run_in_executor(
-            None,
+            _GOOGLE_EXECUTOR,
             lambda: _execute_drive(drive.files().get_media(fileId=chosen['id']))
         )
         from io import BytesIO
@@ -796,9 +802,9 @@ def _poll_payments():
                 if float(pay.get('transaction_amount', 0)) >= 8000:
                     plan = 'mensual'
                 hoy = datetime.now().date().isoformat()
-                tiene_plan = _tiene_plan_sync(user_id)
-                _actualizar_sheet_sync(user_id, 'D', plan)
-                _actualizar_sheet_sync(user_id, 'E', hoy)
+                tiene_plan = _run_google_sync(_tiene_plan_sync, user_id)
+                _run_google_sync(_actualizar_sheet_sync, user_id, 'D', plan)
+                _run_google_sync(_actualizar_sheet_sync, user_id, 'E', hoy)
                 PROCESSED_PAYMENTS.add(pid)
                 _trim_set(PROCESSED_PAYMENTS, 2000)
                 logging.info(f"Pago aprobado para usuario {user_id}, plan {plan} (renovacion={tiene_plan})")
@@ -862,9 +868,9 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     loop = asyncio.get_event_loop()
     try:
-        service = await loop.run_in_executor(None, _get_sheets_service)
+        service = await loop.run_in_executor(_GOOGLE_EXECUTOR, _get_sheets_service)
         rows = await loop.run_in_executor(
-            None,
+            _GOOGLE_EXECUTOR,
             lambda: _execute_sheets(service.spreadsheets().values().get(
                 spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
             ))
@@ -877,9 +883,9 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
             estado = row[6] if len(row) > 6 else ''
             email = row[2] if len(row) > 2 else ''
             if estado == 'vencido' and email and '@' in email:
-                ok = await loop.run_in_executor(None, _revocar_drive_sync, email)
+                ok = await loop.run_in_executor(_GOOGLE_EXECUTOR, _revocar_drive_sync, email)
                 if ok:
-                    await loop.run_in_executor(None, _actualizar_sheet_sync, user_id, 'G', 'acceso_revocado')
+                    await loop.run_in_executor(_GOOGLE_EXECUTOR, _actualizar_sheet_sync, user_id, 'G', 'acceso_revocado')
                     try:
                         await context.bot.send_message(chat_id=int(user_id), text="⚠️ Tu membresía ha vencido. El acceso al Drive fue revocado.")
                     except:
@@ -903,9 +909,9 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
     loop = asyncio.get_event_loop()
     from datetime import timedelta
     try:
-        service = await loop.run_in_executor(None, _get_sheets_service)
+        service = await loop.run_in_executor(_GOOGLE_EXECUTOR, _get_sheets_service)
         rows = await loop.run_in_executor(
-            None,
+            _GOOGLE_EXECUTOR,
             lambda: _execute_sheets(service.spreadsheets().values().get(
                 spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
             ))
@@ -963,14 +969,14 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     msg = await update.message.reply_text("Probando conexion con Drive...")
     try:
         loop = asyncio.get_event_loop()
-        fotos, vids = await loop.run_in_executor(None, _cache_drive_folders)
+        fotos, vids = await loop.run_in_executor(_GOOGLE_EXECUTOR, _cache_drive_folders)
         total_imgs = 0
         total_vids = 0
         for f in fotos:
-            files = await loop.run_in_executor(None, _list_folder_files, f["id"])
+            files = await loop.run_in_executor(_GOOGLE_EXECUTOR, _list_folder_files, f["id"])
             total_imgs += sum(1 for x in files if "image" in x.get("mimeType", ""))
         for v in vids:
-            files = await loop.run_in_executor(None, _list_folder_files, v["id"])
+            files = await loop.run_in_executor(_GOOGLE_EXECUTOR, _list_folder_files, v["id"])
             total_vids += sum(1 for x in files if "video" in x.get("mimeType", "") and int(x.get("size", 0)) <= 10 * 1024 * 1024)
         await msg.edit_text(
             f"Drive OK\n\nImagenes: {total_imgs}\n"
@@ -982,8 +988,8 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await msg.edit_text(f"Error: {e}\n\nRevisa GOOGLE_SERVICE_ACCOUNT_JSON en Render")
 
 def main() -> None:
-    _cargar_mensajes_sync()
-    _cargar_stats_listado_sync()
+    _run_google_sync(_cargar_mensajes_sync)
+    _run_google_sync(_cargar_stats_listado_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
     threading.Thread(target=_poll_payments, daemon=True).start()
@@ -1020,7 +1026,7 @@ def main() -> None:
     job_queue.run_daily(limpiar_dia, time=time(0, 0, tzinfo=TZ), name='limpieza_diaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _cargar_stats_listado_sync)
+        await loop.run_in_executor(_GOOGLE_EXECUTOR, _cargar_stats_listado_sync)
     job_queue.run_daily(refrescar_stats, time=time(6, 0, tzinfo=TZ))
     job_queue.run_daily(refrescar_stats, time=time(18, 0, tzinfo=TZ))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
