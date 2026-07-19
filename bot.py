@@ -542,22 +542,38 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         from io import BytesIO
         is_vid = chosen.get('mimeType', '').startswith('video/')
         if is_vid:
-            msg = await context.bot.send_video(
-                chat_id=CHANNEL_ID,
-                video=InputFile(BytesIO(data), filename=chosen['name']),
-                caption=caption
-            )
-        else:
-            msg = await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=InputFile(BytesIO(data), filename=chosen['name']),
-                caption=caption
-            )
-        context.application.create_task(eliminar_mensaje(msg, 3600))
-        logging.info(f"Muestra {current_model} - {'video' if is_vid else 'foto'}: {chosen['name']}")
+            generic = f"muestra.{'mp4' if is_vid else 'jpg'}"
+            if is_vid:
+                msg = await context.bot.send_video(
+                    chat_id=CHANNEL_ID,
+                    video=InputFile(BytesIO(data), filename=generic),
+                    caption=caption
+                )
+            else:
+                msg = await context.bot.send_photo(
+                    chat_id=CHANNEL_ID,
+                    photo=InputFile(BytesIO(data), filename=generic),
+                    caption=caption
+                )
+            context.bot_data.setdefault('today_posts', set()).add(msg.message_id)
+            logging.info(f"Muestra publicada ({len(context.bot_data['today_posts'])} hoy)")
     except Exception as e:
         logging.error(f"Error publicando muestra: {e}")
         used.discard(chosen['id'])
+
+async def limpiar_dia(context: ContextTypes.DEFAULT_TYPE) -> None:
+    mids = context.bot_data.get('today_posts', set())
+    if not mids:
+        return
+    deleted = 0
+    for mid in mids:
+        try:
+            await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=mid)
+            deleted += 1
+        except Exception:
+            pass
+    mids.clear()
+    logging.info(f"Limpieza diaria: {deleted} mensajes eliminados")
 
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
@@ -800,7 +816,8 @@ def main() -> None:
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (9, 13, 18, 21):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
-    job_queue.run_repeating(publicar_muestra, interval=3600, first=10, name='muestra_horaria')
+    job_queue.run_repeating(publicar_muestra, interval=1800, first=10, name='muestra_30min')
+    job_queue.run_daily(limpiar_dia, time=time(0, 0, tzinfo=TZ), name='limpieza_diaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _cargar_stats_listado_sync)
