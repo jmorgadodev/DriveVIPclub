@@ -246,7 +246,12 @@ def _bienvenida(user):
     name = user.mention_html() if user.username else user.first_name or 'Usuario'
     return m('bienvenida').format(user=name)
 
+def _solo_privado(update: Update) -> bool:
+    return update.effective_chat and update.effective_chat.type == 'private'
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        return
     user = update.effective_user
     text = _bienvenida(user)
     if os.path.exists('bienvenida.png'):
@@ -258,18 +263,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.application.create_task(eliminar_mensaje(msg, 7200))
 
 async def precios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("ℹ️ Escríbeme en privado para ver los precios: @DriveVIPclubBot")
+        return
     await update.message.reply_text(m('precios'))
 
 async def contenido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("ℹ️ Escríbeme en privado para ver el contenido: @DriveVIPclubBot")
+        return
     await update.message.reply_text(m('contenido'))
 
 async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("ℹ️ Escríbeme en privado para contactar al admin: @DriveVIPclubBot")
+        return
     await update.message.reply_text(m('contacto'))
 
 async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("ℹ️ Escríbeme en privado para ver el listado: @DriveVIPclubBot")
+        return
     await update.message.reply_text(m('lista'))
 
 async def ventajas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("ℹ️ Escríbeme en privado para ver las ventajas: @DriveVIPclubBot")
+        return
     text = m('ventajas')
     if os.path.exists('ventajas.png'):
         with open('ventajas.png', 'rb') as f:
@@ -306,6 +326,9 @@ async def _crear_preferencia(user_id: int, precio: int, plan: str):
     return pref.json()
 
 async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("⚠️ Para contratar un plan, escríbeme en privado: @DriveVIPclubBot")
+        return
     user = update.effective_user
     if not MP_ACCESS_TOKEN:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
@@ -322,6 +345,9 @@ async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error en /semanal: {e}")
 
 async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("⚠️ Para contratar un plan, escríbeme en privado: @DriveVIPclubBot")
+        return
     user = update.effective_user
     if not MP_ACCESS_TOKEN:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
@@ -340,6 +366,8 @@ async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or not update.message or not update.message.text:
+        return
+    if not _solo_privado(update):
         return
     text = update.message.text.strip()
     if user.id in PENDING_GMAIL:
@@ -363,8 +391,6 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 ))
         else:
             await update.message.reply_text("❌ Error compartiendo el Drive. Contacta al admin.")
-    elif update.message.chat.type == 'private':
-        pass
 
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     key = context.job.data
