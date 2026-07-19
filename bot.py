@@ -250,7 +250,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     text = _bienvenida(user)
     if os.path.exists('bienvenida.png'):
-        msg = await update.message.reply_photo(photo=InputFile('bienvenida.png'), caption=text, parse_mode='HTML')
+        with open('bienvenida.png', 'rb') as f:
+            msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
     else:
         msg = await update.message.reply_text(text, parse_mode='HTML')
     await registrar_usuario(user.id, user.username or 'sin_username')
@@ -271,7 +272,8 @@ async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def ventajas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = m('ventajas')
     if os.path.exists('ventajas.png'):
-        await update.message.reply_photo(photo=InputFile('ventajas.png'), caption=text)
+        with open('ventajas.png', 'rb') as f:
+            await update.message.reply_photo(photo=InputFile(f), caption=text)
     else:
         await update.message.reply_text(text)
 
@@ -280,7 +282,8 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if not user.is_bot:
             text = _bienvenida(user)
             if os.path.exists('bienvenida.png'):
-                msg = await update.message.reply_photo(photo=InputFile('bienvenida.png'), caption=text, parse_mode='HTML')
+                with open('bienvenida.png', 'rb') as f:
+                    msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
             else:
                 msg = await update.message.reply_text(text, parse_mode='HTML')
             await registrar_usuario(user.id, user.username or 'sin_username')
@@ -348,15 +351,16 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await loop.run_in_executor(None, _actualizar_sheet_sync, user.id, 'C', text)
         if ok:
             del PENDING_GMAIL[user.id]
-            await update.message.reply_photo(
-                photo=InputFile('demo_drive.png'),
-                caption=(
+            if os.path.exists('demo_drive.png'):
+                with open('demo_drive.png', 'rb') as f:
+                    await update.message.reply_photo(
+                        photo=InputFile(f),
+                        caption=(
                     f"✅ Acceso concedido a {text}\n\n"
                     "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
                     f"Link directo: https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}\n"
                     "¡Disfruta!"
-                )
-            )
+                ))
         else:
             await update.message.reply_text("❌ Error compartiendo el Drive. Contacta al admin.")
     elif update.message.chat.type == 'private':
@@ -371,13 +375,20 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     enough_time = (now - last_img) >= 14400
     try:
         if can_have_image and enough_time and os.path.exists('recordatorio.png') and random.random() < 0.5:
-            message = await context.bot.send_photo(
-                chat_id=PUBLIC_GROUP_ID,
-                photo=InputFile('recordatorio.png'),
-                caption=text,
-            )
-            context.bot_data['last_promo_img'] = now
-            context.application.create_task(eliminar_mensaje(message, 14400))
+            try:
+                with open('recordatorio.png', 'rb') as f:
+                    message = await context.bot.send_photo(
+                        chat_id=PUBLIC_GROUP_ID,
+                        photo=InputFile(f),
+                        caption=text,
+                    )
+                context.bot_data['last_promo_img'] = now
+                context.application.create_task(eliminar_mensaje(message, 14400))
+            except Exception:
+                message = await context.bot.send_message(
+                    chat_id=PUBLIC_GROUP_ID,
+                    text=text,
+                )
         else:
             message = await context.bot.send_message(
                 chat_id=PUBLIC_GROUP_ID,
@@ -385,7 +396,7 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         context.bot_data.setdefault('promo_message_ids', set()).add(message.message_id)
     except Exception as e:
-        print(f"Error enviando mensaje automático: {e}")
+        logging.error(f"Error enviando mensaje automático: {e}")
 
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
