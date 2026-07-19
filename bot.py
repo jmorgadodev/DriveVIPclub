@@ -453,27 +453,42 @@ CAPTIONS_SAMPLES = [
     "\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: @DriveVIPclubBot",
 ]
 
-def _list_drive_media(mime_prefix):
-    try:
-        drive = _get_drive_service()
-        all_files = []
-        page_token = None
-        while True:
-            r = drive.files().list(
-                q=f"mimeType contains '{mime_prefix}/'",
-                fields="files(id,name,size,mimeType)",
-                pageSize=200,
-                pageToken=page_token,
-                orderBy="name"
-            ).execute()
-            all_files.extend(r.get("files", []))
-            page_token = r.get("nextPageToken")
-            if not page_token:
-                break
-        return all_files
-    except Exception as e:
-        logging.error(f"Error listing drive {mime_prefix}s: {e}", exc_info=True)
-        return []
+def _list_folder_files(folder_id, fields="files(id,name,size,mimeType)"):
+    """Lista todos los archivos dentro de una carpeta (con paginación)."""
+    drive = _get_drive_service()
+    results = []
+    pt = None
+    while True:
+        r = drive.files().list(
+            q=f"'{folder_id}' in parents",
+            fields=fields,
+            pageSize=200,
+            pageToken=pt,
+            orderBy="name"
+        ).execute()
+        results.extend(r.get("files", []))
+        pt = r.get("nextPageToken")
+        if not pt:
+            break
+    return results
+
+def _find_all_folders(name):
+    """Encuentra TODAS las carpetas con un nombre dado accesibles por la SA."""
+    drive = _get_drive_service()
+    folders = []
+    pt = None
+    while True:
+        r = drive.files().list(
+            q=f"name='{name}' and mimeType='application/vnd.google-apps.folder'",
+            fields="files(id)",
+            pageSize=200,
+            pageToken=pt
+        ).execute()
+        folders.extend(r.get("files", []))
+        pt = r.get("nextPageToken")
+        if not pt:
+            break
+    return folders
 
 def _extract_model(name):
     parts = name.split(" DriveVIPclub")
@@ -487,12 +502,31 @@ def _group_by_model(files):
     return groups
 
 def _cache_drive_media():
-    imgs = _list_drive_media("image")
-    vids = [v for v in _list_drive_media("video") if int(v.get("size", 0)) <= 10 * 1024 * 1024]
-    imgs_by_model = _group_by_model(imgs)
-    vids_by_model = _group_by_model(vids)
+    logging.info("Scanning Drive: finding Fotos and Videos folders...")
+    fotos = _find_all_folders("Fotos")
+    videos_folders = _find_all_folders("Videos")
+    logging.info(f"Found {len(fotos)} Fotos folders, {len(videos_folders)} Videos folders")
+
+    all_imgs = []
+    for i, ff in enumerate(fotos):
+        files = _list_folder_files(ff["id"])
+        imgs = [f for f in files if "image" in f.get("mimeType", "")]
+        all_imgs.extend(imgs)
+        if (i + 1) % 50 == 0:
+            logging.info(f"  Scanned {i+1}/{len(fotos)} Fotos folders ({len(all_imgs)} images)")
+
+    all_vids = []
+    for i, vf in enumerate(videos_folders):
+        files = _list_folder_files(vf["id"])
+        small = [f for f in files if "video" in f.get("mimeType", "") and int(f.get("size", 0)) <= 10 * 1024 * 1024]
+        all_vids.extend(small)
+        if (i + 1) % 50 == 0:
+            logging.info(f"  Scanned {i+1}/{len(videos_folders)} Videos folders ({len(all_vids)} videos)")
+
+    imgs_by_model = _group_by_model(all_imgs)
+    vids_by_model = _group_by_model(all_vids)
     models = sorted(imgs_by_model.keys())
-    logging.info(f"Drive media cached: {len(imgs)} images, {len(vids)} videos from {len(models)} models")
+    logging.info(f"Drive media cached: {len(all_imgs)} images, {len(all_vids)} videos from {len(models)} models")
     return imgs_by_model, vids_by_model, models
 
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
