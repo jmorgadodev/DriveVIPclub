@@ -591,7 +591,9 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=PUBLIC_GROUP_ID,
                 text=text,
             )
-        context.bot_data.setdefault('promo_message_ids', set()).add(message.message_id)
+        pm_ids = context.bot_data.setdefault('promo_message_ids', set())
+        pm_ids.add(message.message_id)
+        _trim_set(pm_ids, 500)
     except Exception as e:
         logging.error(f"Error enviando mensaje automático: {e}")
 
@@ -763,6 +765,7 @@ async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if key in seen:
         return
     seen.add(key)
+    _trim_set(seen, 2000)
 
     try:
         await context.bot.send_message(
@@ -819,6 +822,7 @@ def _poll_payments():
                 _actualizar_sheet_sync(user_id, 'D', plan)
                 _actualizar_sheet_sync(user_id, 'E', hoy)
                 PROCESSED_PAYMENTS.add(pid)
+                _trim_set(PROCESSED_PAYMENTS, 2000)
                 logging.info(f"Pago aprobado para usuario {user_id}, plan {plan} (renovacion={tiene_plan})")
                 if not tiene_plan:
                     PENDING_GMAIL[user_id] = True
@@ -835,6 +839,10 @@ def _poll_payments():
             logging.error(f"Error polling payments: {e}")
         threading.Event().wait(30)
 
+def _trim_set(s, max_size=1000):
+    while len(s) > max_size:
+        s.pop()
+
 def _start_http():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -845,14 +853,21 @@ def _start_http():
     while True:
         try:
             conn, _ = s.accept()
+        except socket.timeout:
+            continue
+        except Exception:
+            continue
+        try:
             conn.settimeout(5)
             conn.recv(4096)
             conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
-            conn.close()
-        except socket.timeout:
-            pass
         except Exception:
             pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 def _self_ping():
     url = 'https://drivevipclub.onrender.com/'
