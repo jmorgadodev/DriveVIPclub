@@ -472,7 +472,7 @@ def _list_drive_media(mime_prefix):
                 break
         return all_files
     except Exception as e:
-        logging.error(f"Error listing drive {mime_prefix}s: {e}")
+        logging.error(f"Error listing drive {mime_prefix}s: {e}", exc_info=True)
         return []
 
 def _extract_model(name):
@@ -782,6 +782,24 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logging.error(f"Error en verificar_proximos_vencer: {e}")
 
+async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update, context):
+        return
+    msg = await update.message.reply_text("Probando conexion con Drive...")
+    try:
+        loop = asyncio.get_event_loop()
+        imgs, vids, models = await loop.run_in_executor(None, _cache_drive_media)
+        total_imgs = sum(len(v) for v in imgs.values())
+        total_vids = sum(len(v) for v in vids.values())
+        await msg.edit_text(
+            f"Drive OK\n\nImagenes: {total_imgs}\n"
+            f"Videos <=10MB: {total_vids}\n"
+            f"Modelos: {len(models)}\n\n"
+            f"Primer modelo: {models[0] if models else 'N/A'}"
+        )
+    except Exception as e:
+        await msg.edit_text(f"Error: {e}\n\nRevisa GOOGLE_SERVICE_ACCOUNT_JSON en Render")
+
 def main() -> None:
     _cargar_mensajes_sync()
     _cargar_stats_listado_sync()
@@ -797,6 +815,7 @@ def main() -> None:
     application.add_handler(CommandHandler("mensual",  mensual))
     application.add_handler(CommandHandler("lista",    lista))
     application.add_handler(CommandHandler("ventajas", ventajas))
+    application.add_handler(CommandHandler("testdrive", test_drive))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
     )
