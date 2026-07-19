@@ -60,6 +60,20 @@
 - `precios.png`, `transparencia.png` → para fijar manualmente en el grupo
 - `demo_drive.png` → enviada al conceder acceso al Drive
 
+## Canal @DriveVIPclub
+- ID: -1004398583245
+- Bot es admin, puede publicar
+- Descripcion con link al grupo y bot, foto puesta
+- Auto-posts programados: 9:00, 13:00, 18:00, 21:00 Chile
+- CANAL_TEXTS rotan 5 variantes con stats y CTA al bot
+- Primeros posts de bienvenida fijados en el canal
+- publicar_muestra(): 1 media/hora desde Drive, auto-borrado 3600s
+  - Carga imágenes (~1028) y videos ≤10MB (~101) vía API Drive (paginación 200), cachea en bot_data
+  - 70% foto / 30% video aleatorio
+  - Lleva set `used_images` para no repetir; cuando agota, reinicia
+  - Descarga vía get_media() (sin almacenamiento intermedio) y envía como InputFile(BytesIO)
+  - Usa send_photo() para imágenes, send_video() para videos
+
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
 - Check Sheet: python check_sheet.py

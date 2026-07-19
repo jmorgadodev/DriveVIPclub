@@ -309,6 +309,17 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 msg = await update.message.reply_text(text, parse_mode='HTML')
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
+            chan_msg = await update.message.reply_text(
+                f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
+                "Tenemos un CANAL con AVANCES REALES del contenido.\n"
+                "Muestras en video y foto actualizadas cada 30 min.\n\n"
+                "✅ Ve la calidad REAL antes de pagar\n"
+                "✅ Contenido auténtico, no capturas editadas\n"
+                "✅ Decide con muestras en vivo\n\n"
+                "👉 @DriveVIPclub",
+                parse_mode='HTML'
+            )
+            context.application.create_task(eliminar_mensaje(chan_msg, 14400))
 
 async def _crear_preferencia(user_id: int, precio: int, plan: str):
     import requests as req
