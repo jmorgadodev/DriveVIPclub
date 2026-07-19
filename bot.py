@@ -67,6 +67,7 @@ _DRIVE_LOCK = threading.Lock()
 _SHEETS_API_LOCK = threading.Lock()
 _DRIVE_API_LOCK = threading.Lock()
 _GOOGLE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='google-api')
+_PAYMENT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mercadopago')
 
 WELCOME_IMAGE_URL = "https://raw.githubusercontent.com/jmorgadodev/DriveVIPclub/master/bienvenida.png"
 
@@ -135,6 +136,12 @@ def _get_drive_service():
 def _compartir_drive_sync(email: str) -> bool:
     try:
         drive = _get_drive_service()
+        permissions = _execute_drive(drive.permissions().list(
+            fileId=DRIVE_FOLDER_ID,
+            fields='permissions(id,emailAddress)',
+        )).get('permissions', [])
+        if any(p.get('emailAddress') == email for p in permissions):
+            return True
         _execute_drive(drive.permissions().create(
             fileId=DRIVE_FOLDER_ID,
             body={'type': 'user', 'role': 'reader', 'emailAddress': email},
@@ -185,18 +192,114 @@ def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
         logging.error(f"Error actualizando Sheet para {user_id}: {e}")
     return False
 
-def _tiene_plan_sync(user_id: int) -> bool:
-    try:
-        service = _get_sheets_service()
-        rows = _execute_sheets(service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:D'
+def _parse_payment_ids(value):
+    return {item for item in str(value or '').replace(',', '|').split('|') if item}
+
+
+def _parse_sheet_date(value):
+    for date_format in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y'):
+        try:
+            return datetime.strptime(str(value), date_format).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _cargar_estado_pagos_sync():
+    service = _get_sheets_service()
+    rows = _execute_sheets(service.spreadsheets().values().get(
+        spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:K'
+    )).get('values', [])
+
+    if not rows or len(rows[0]) <= 10 or rows[0][10] != 'payment_ids':
+        _execute_sheets(service.spreadsheets().values().update(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="'Hoja 1'!K1",
+            valueInputOption='RAW',
+            body={'values': [['payment_ids']]},
         ))
-        for row in rows.get('values', []):
-            if row and row[0] == str(user_id) and len(row) > 3 and row[3]:
-                return True
-    except:
-        pass
-    return False
+
+    PROCESSED_PAYMENTS.clear()
+    PENDING_GMAIL.clear()
+    for row in rows[1:]:
+        if not row:
+            continue
+        if len(row) > 10:
+            PROCESSED_PAYMENTS.update(_parse_payment_ids(row[10]))
+        user_id = row[0]
+        email = row[2] if len(row) > 2 else ''
+        plan = row[3] if len(row) > 3 else ''
+        estado = row[6].strip().lower() if len(row) > 6 else ''
+        if (
+            user_id.isdigit()
+            and plan
+            and not email
+            and estado not in ('vencido', 'acceso_revocado')
+        ):
+            PENDING_GMAIL[int(user_id)] = True
+
+    while len(PROCESSED_PAYMENTS) > 2000:
+        PROCESSED_PAYMENTS.pop()
+    logging.info(
+        f"Estado de pagos cargado: {len(PROCESSED_PAYMENTS)} pagos, "
+        f"{len(PENDING_GMAIL)} Gmail pendientes"
+    )
+
+
+def _procesar_pago_sheet_sync(user_id, payment_id, plan, fecha, create_missing=True):
+    service = _get_sheets_service()
+    rows = _execute_sheets(service.spreadsheets().values().get(
+        spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:K'
+    )).get('values', [])
+    payment_id = str(payment_id)
+
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not row or row[0] != str(user_id):
+            continue
+        payment_ids = _parse_payment_ids(row[10] if len(row) > 10 else '')
+        if payment_id in payment_ids:
+            return {'status': 'duplicate'}
+
+        tenia_plan = bool(len(row) > 3 and row[3])
+        needs_email = not bool(len(row) > 2 and row[2])
+        today = _parse_sheet_date(fecha)
+        if not today:
+            raise ValueError(f'Fecha de pago inválida: {fecha}')
+        current_end = _parse_sheet_date(row[5] if len(row) > 5 else '')
+        start_date = max(today, current_end) if current_end else today
+        duration_days = 30 if plan == 'mensual' else 7
+        expires_on = start_date + timedelta(days=duration_days)
+        payment_ids.add(payment_id)
+        persisted_ids = '|'.join(sorted(payment_ids)[-100:])
+        _execute_sheets(service.spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            body={
+                'valueInputOption': 'USER_ENTERED',
+                'data': [
+                    {
+                        'range': f"'Hoja 1'!D{row_number}:E{row_number}",
+                        'values': [[plan, start_date.isoformat()]],
+                    },
+                    {
+                        'range': f"'Hoja 1'!K{row_number}",
+                        'values': [[persisted_ids]],
+                    },
+                ],
+            },
+        ))
+        return {
+            'status': 'processed',
+            'renewal': tenia_plan,
+            'needs_email': needs_email,
+            'expires_on': expires_on.isoformat(),
+        }
+
+    if create_missing:
+        _registrar_usuario_sync(user_id, 'sin_username')
+        return _procesar_pago_sheet_sync(
+            user_id, payment_id, plan, fecha, create_missing=False
+        )
+    return {'status': 'missing_user'}
 
 def _cargar_mensajes_sync():
     global MENSAJES
@@ -386,7 +489,7 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logging.error(f"Error en _bienvenida_chat_member: {e}")
 
-async def _crear_preferencia(user_id: int, precio: int, plan: str):
+def _crear_preferencia_sync(user_id: int, precio: int, plan: str):
     import requests as req
     pref = req.post('https://api.mercadopago.com/checkout/preferences', json={
         'items': [{
@@ -399,8 +502,20 @@ async def _crear_preferencia(user_id: int, precio: int, plan: str):
         'notification_url': 'https://drivevipclub.onrender.com/',
         'back_urls': {'success': 'https://t.me/DriveVIPclubBot', 'failure': 'https://t.me/DriveVIPclubBot'},
         'auto_return': 'approved',
-    }, headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}', 'Content-Type': 'application/json'})
+    }, headers={
+        'Authorization': f'Bearer {MP_ACCESS_TOKEN}',
+        'Content-Type': 'application/json',
+    }, timeout=20)
+    pref.raise_for_status()
     return pref.json()
+
+
+async def _crear_preferencia(user_id: int, precio: int, plan: str):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _PAYMENT_EXECUTOR,
+        partial(_crear_preferencia_sync, user_id, precio, plan),
+    )
 
 async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
@@ -455,21 +570,30 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         loop = asyncio.get_event_loop()
         ok = await loop.run_in_executor(_GOOGLE_EXECUTOR, _compartir_drive_sync, text)
-        await loop.run_in_executor(_GOOGLE_EXECUTOR, _actualizar_sheet_sync, user.id, 'C', text)
-        if ok:
-            del PENDING_GMAIL[user.id]
-            if os.path.exists('demo_drive.png'):
-                with open('demo_drive.png', 'rb') as f:
-                    await update.message.reply_photo(
-                        photo=InputFile(f),
-                        caption=(
-                    f"✅ Acceso concedido a {text}\n\n"
-                    "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
-                    f"Link directo: https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}\n"
-                    "¡Disfruta!"
-                ))
-        else:
+        if not ok:
             await update.message.reply_text("❌ Error compartiendo el Drive. Contacta al admin.")
+            return
+        saved = await loop.run_in_executor(
+            _GOOGLE_EXECUTOR, _actualizar_sheet_sync, user.id, 'C', text
+        )
+        if not saved:
+            await update.message.reply_text(
+                "⚠️ El acceso fue concedido, pero no pude guardar tu Gmail. "
+                "Envíamelo nuevamente en unos minutos."
+            )
+            return
+        del PENDING_GMAIL[user.id]
+        caption = (
+            f"✅ Acceso concedido a {text}\n\n"
+            "Revisa DRIVE > COMPARTIDOS CONMIGO (no llega email).\n"
+            f"Link directo: https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}\n"
+            "¡Disfruta!"
+        )
+        if os.path.exists('demo_drive.png'):
+            with open('demo_drive.png', 'rb') as f:
+                await update.message.reply_photo(photo=InputFile(f), caption=caption)
+        else:
+            await update.message.reply_text(caption)
 
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     key = context.job.data
@@ -696,58 +820,92 @@ async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 PORT = int(os.getenv('PORT', '10000'))
 
-_BOT_INSTANCE = None
+def _buscar_pagos_aprobados_sync():
+    params = urllib.parse.urlencode({
+        'status': 'approved',
+        'sort': 'date_created',
+        'criteria': 'desc',
+        'limit': 20,
+    })
+    request = urllib.request.Request(
+        f'https://api.mercadopago.com/v1/payments/search?{params}',
+        headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}'},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read()).get('results', [])
 
-def _get_bot():
-    global _BOT_INSTANCE
-    if _BOT_INSTANCE is None:
-        from telegram import Bot
-        _BOT_INSTANCE = Bot(TELEGRAM_BOT_TOKEN)
-    return _BOT_INSTANCE
 
-def _poll_payments():
-    bot = _get_bot()
-    while True:
+async def _poll_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not MP_ACCESS_TOKEN:
+        return
+    loop = asyncio.get_running_loop()
+    try:
+        payments = await loop.run_in_executor(
+            _PAYMENT_EXECUTOR, _buscar_pagos_aprobados_sync
+        )
+    except Exception as e:
+        logging.error(f"Error consultando pagos: {e}")
+        return
+
+    for payment in payments:
+        payment_id = str(payment.get('id') or '')
+        if not payment_id or payment_id in PROCESSED_PAYMENTS:
+            continue
+        user_id_str = str(payment.get('external_reference') or '')
+        if not user_id_str.isdigit():
+            continue
+        user_id = int(user_id_str)
+        plan = 'mensual' if float(payment.get('transaction_amount', 0)) >= 8000 else 'semanal'
+        hoy = datetime.now(TZ).date().isoformat()
+
         try:
-            params = urllib.parse.urlencode({"status": "approved", "sort": "date_created", "criteria": "desc", "limit": 20})
-            req = urllib.request.Request(
-                f'https://api.mercadopago.com/v1/payments/search?{params}',
-                headers={'Authorization': f'Bearer {MP_ACCESS_TOKEN}'}
+            result = await loop.run_in_executor(
+                _GOOGLE_EXECUTOR,
+                _procesar_pago_sheet_sync,
+                user_id,
+                payment_id,
+                plan,
+                hoy,
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-            for pay in data.get('results', []):
-                pid = pay.get('id')
-                if not pid or pid in PROCESSED_PAYMENTS:
-                    continue
-                user_id_str = pay.get('external_reference', '')
-                if not user_id_str or not user_id_str.isdigit():
-                    continue
-                user_id = int(user_id_str)
-                plan = 'semanal'
-                if float(pay.get('transaction_amount', 0)) >= 8000:
-                    plan = 'mensual'
-                hoy = datetime.now().date().isoformat()
-                tiene_plan = _run_google_sync(_tiene_plan_sync, user_id)
-                _run_google_sync(_actualizar_sheet_sync, user_id, 'D', plan)
-                _run_google_sync(_actualizar_sheet_sync, user_id, 'E', hoy)
-                PROCESSED_PAYMENTS.add(pid)
-                _trim_set(PROCESSED_PAYMENTS, 2000)
-                logging.info(f"Pago aprobado para usuario {user_id}, plan {plan} (renovacion={tiene_plan})")
-                if not tiene_plan:
-                    PENDING_GMAIL[user_id] = True
-                    bot.send_message(
-                        chat_id=user_id,
-                        text="✅ ¡Pago confirmado! Ahora envíame tu correo Gmail para darte acceso al Drive."
-                    )
-                else:
-                    bot.send_message(
-                        chat_id=user_id,
-                        text=f"✅ ¡Pago recibido! Tu membresía {plan} se ha extendido desde hoy ({hoy}). ¡Disfruta!"
-                    )
         except Exception as e:
-            logging.error(f"Error polling payments: {e}")
-        threading.Event().wait(30)
+            logging.error(f"Error guardando pago {payment_id}: {e}")
+            continue
+
+        if result['status'] == 'missing_user':
+            logging.error(f"Pago {payment_id} sin usuario registrable: {user_id}")
+            continue
+        PROCESSED_PAYMENTS.add(payment_id)
+        _trim_set(PROCESSED_PAYMENTS, 2000)
+        if result['status'] == 'duplicate':
+            continue
+
+        renewal = result['renewal']
+        needs_email = result['needs_email']
+        expires_on = result['expires_on']
+        logging.info(
+            f"Pago aprobado para usuario {user_id}, plan {plan} "
+            f"(renovacion={renewal})"
+        )
+        try:
+            if not needs_email:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"✅ ¡Pago recibido! Tu membresía {plan} se ha extendido "
+                        f"hasta {expires_on}. ¡Disfruta!"
+                    ),
+                )
+            else:
+                PENDING_GMAIL[user_id] = True
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "✅ ¡Pago confirmado! Ahora envíame tu correo Gmail "
+                        "para darte acceso al Drive."
+                    ),
+                )
+        except Exception as e:
+            logging.error(f"Pago {payment_id} guardado, pero no se pudo avisar: {e}")
 
 def _trim_set(s, max_size=1000):
     while len(s) > max_size:
@@ -916,9 +1074,9 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def main() -> None:
     _run_google_sync(_cargar_mensajes_sync)
     _run_google_sync(_cargar_stats_listado_sync)
+    _run_google_sync(_cargar_estado_pagos_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
-    threading.Thread(target=_poll_payments, daemon=True).start()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start",    start))
     application.add_handler(CommandHandler("precios",  precios))
@@ -937,6 +1095,12 @@ def main() -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje)
     )
     job_queue = application.job_queue
+    job_queue.run_repeating(
+        _poll_payments,
+        interval=30,
+        first=5,
+        name='poll_payments',
+    )
     for hour, key in ((0, 'auto_00'), (8, 'auto_08'), (12, 'auto_12'), (16, 'auto_16'), (20, 'auto_20')):
         job_queue.run_daily(
             mensaje_automatico,
