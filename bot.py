@@ -50,6 +50,7 @@ from config import (
 )
 from mensajes import FALLBACK
 
+GROUP_LINK = "https://t.me/+-1gS1EfQMLNmMjdh"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 MENSAJES = {}
@@ -251,17 +252,22 @@ def _solo_privado(update: Update) -> bool:
     return update.effective_chat and update.effective_chat.type == 'private'
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _solo_privado(update):
-        return
-    user = update.effective_user
-    text = _bienvenida(user)
-    if os.path.exists('bienvenida.png'):
-        with open('bienvenida.png', 'rb') as f:
-            msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
-    else:
-        msg = await update.message.reply_text(text, parse_mode='HTML')
-    await registrar_usuario(user.id, user.username or 'sin_username')
-    context.application.create_task(eliminar_mensaje(msg, 7200))
+    try:
+        if not _solo_privado(update):
+            return
+        user = update.effective_user
+        if not user or not update.message:
+            return
+        text = _bienvenida(user)
+        if os.path.exists('bienvenida.png'):
+            with open('bienvenida.png', 'rb') as f:
+                msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
+        else:
+            msg = await update.message.reply_text(text, parse_mode='HTML')
+        await registrar_usuario(user.id, user.username or 'sin_username')
+        context.application.create_task(eliminar_mensaje(msg, 7200))
+    except Exception as e:
+        logging.error(f"Error en start: {e}")
 
 async def precios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
@@ -299,27 +305,45 @@ async def ventajas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(text)
 
 async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    for user in update.message.new_chat_members:
-        if not user.is_bot:
+    try:
+        chat = update.effective_chat
+        if not chat:
+            logging.warning("nuevo_miembro sin effective_chat")
+            return
+        if not update.message or not update.message.new_chat_members:
+            logging.warning("nuevo_miembro sin message o new_chat_members")
+            return
+        for user in update.message.new_chat_members:
+            if user.is_bot:
+                continue
             text = _bienvenida(user)
-            if os.path.exists('bienvenida.png'):
-                with open('bienvenida.png', 'rb') as f:
-                    msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
-            else:
-                msg = await update.message.reply_text(text, parse_mode='HTML')
+            try:
+                if os.path.exists('bienvenida.png'):
+                    with open('bienvenida.png', 'rb') as f:
+                        msg = await update.message.reply_photo(photo=InputFile(f), caption=text, parse_mode='HTML')
+                else:
+                    msg = await update.message.reply_text(text, parse_mode='HTML')
+            except Exception as e:
+                logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
+                continue
             await registrar_usuario(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
-            chan_msg = await update.message.reply_text(
-                f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
-                "Tenemos un CANAL con AVANCES REALES del contenido.\n"
-                "Muestras en video y foto actualizadas cada 30 min.\n\n"
-                "✅ Ve la calidad REAL antes de pagar\n"
-                "✅ Contenido auténtico, no capturas editadas\n"
-                "✅ Decide con muestras en vivo\n\n"
-                "👉 @DriveVIPclub",
-                parse_mode='HTML'
-            )
-            context.application.create_task(eliminar_mensaje(chan_msg, 14400))
+            try:
+                chan_msg = await update.message.reply_text(
+                    f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
+                    "Tenemos un CANAL con AVANCES REALES del contenido.\n"
+                    "Muestras en video y foto actualizadas cada 30 min.\n\n"
+                    "✅ Ve la calidad REAL antes de pagar\n"
+                    "✅ Contenido auténtico, no capturas editadas\n"
+                    "✅ Decide con muestras en vivo\n\n"
+                    "👉 @DriveVIPclub",
+                    parse_mode='HTML'
+                )
+                context.application.create_task(eliminar_mensaje(chan_msg, 14400))
+            except Exception as e:
+                logging.error(f"Error enviando 'ANTES DE IRTE' a {user.id} en {chat.id}: {e}")
+    except Exception as e:
+        logging.error(f"Error en nuevo_miembro: {e}")
 
 async def _crear_preferencia(user_id: int, precio: int, plan: str):
     import requests as req
@@ -437,11 +461,11 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error enviando mensaje automático: {e}")
 
 CANAL_TEXTS = [
-    "\u2728 {carpetas} modelos organizados A-Z en nuestro Drive.\n{videos} VIDEOS \u2022 {fotos} FOTOS\n\n\U0001F447 Accede hoy: @DriveVIPclubBot",
-    "\U0001F4E6 \u00bfListo para ver lo que tenemos?\n{carpetas} modelos \u2022 {videos} videos \u2022 {fotos} fotos\n\n\U0001F447 Habla con @DriveVIPclubBot",
-    "\U0001F525 Drive actualizado esta semana\n{videos} VIDEOS en HD\n{carpetas} modelos\n\n\U0001F447 \u00bfQuieres entrar? @DriveVIPclubBot",
-    "\U0001F4CA DATO: tenemos planilla DETALLADA con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Pide el link: @DriveVIPclubBot",
-    "\U0001F31F Desde $4.990 el acceso m\u00e1s completo.\nSin l\u00edmite de descargas, 24/7.\n\n\U0001F447 Compra aqu\u00ed: @DriveVIPclubBot",
+    f"\u2728 {{carpetas}} modelos organizados A-Z en nuestro Drive.\n{{videos}} VIDEOS \u2022 {{fotos}} FOTOS\n\n\U0001F447 \u00danete al grupo: {GROUP_LINK}",
+    f"\U0001F4E6 \u00bfListo para ver lo que tenemos?\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{fotos}} fotos\n\n\U0001F447 Ingresa al grupo: {GROUP_LINK}",
+    f"\U0001F525 Drive actualizado esta semana\n{{videos}} VIDEOS en HD\n{{carpetas}} modelos\n\n\U0001F447 \u00bfQuieres entrar? {GROUP_LINK}",
+    f"\U0001F4CA DATO: tenemos planilla DETALLADA con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Pide el link en el grupo: {GROUP_LINK}",
+    f"\U0001F31F Desde $4.990 el acceso m\u00e1s completo.\nSin l\u00edmite de descargas, 24/7.\n\n\U0001F447 Compra aqu\u00ed: {GROUP_LINK}",
 ]
 
 async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -456,12 +480,12 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error enviando mensaje al canal: {e}")
 
 CAPTIONS_SAMPLES = [
-    "\U0001F4F7 Sample exclusivo de nuestro contenido.\n{carpetas} modelos \u2022 {videos} videos \u2022 +1TB\n\n\U0001F447 Quieres ver mas? @DriveVIPclubBot",
-    "\U0001F525 Esto es solo una muestra.\nTenemos {carpetas} modelos organizados A-Z.\n\n\U0001F447 Accede hoy: @DriveVIPclubBot",
-    "\U0001F48E Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\U0001F447 Habla con @DriveVIPclubBot",
-    "\U0001F4CA Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Info: @DriveVIPclubBot",
-    "\U0001F31F Desde $4.990 el plan semanal.\nMercadoPago, acceso inmediato.\n\n\U0001F447 Compra aqui: @DriveVIPclubBot",
-    "\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: @DriveVIPclubBot",
+    f"\U0001F4F7 Sample exclusivo de nuestro contenido.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 +1TB\n\n\U0001F447 Quieres ver mas? {GROUP_LINK}",
+    f"\U0001F525 Esto es solo una muestra.\nTenemos {{carpetas}} modelos organizados A-Z.\n\n\U0001F447 Accede hoy: {GROUP_LINK}",
+    f"\U0001F48E Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\U0001F447 Habla con nosotros: {GROUP_LINK}",
+    f"\U0001F4CA Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Info: {GROUP_LINK}",
+    f"\U0001F31F Desde $4.990 el plan semanal.\nMercadoPago, acceso inmediato.\n\n\U0001F447 Compra aqui: {GROUP_LINK}",
+    f"\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: {GROUP_LINK}",
 ]
 
 def _list_folder_files(folder_id, fields="files(id,name,size,mimeType)"):
