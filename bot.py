@@ -783,7 +783,7 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error en verificar_proximos_vencer: {e}")
 
 async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _solo_privado(update, context):
+    if not _solo_privado(update):
         return
     msg = await update.message.reply_text("Probando conexion con Drive...")
     try:
