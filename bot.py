@@ -294,16 +294,7 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
 
 def _bienvenida(user):
     name = user.mention_html() if user.username else user.first_name or 'Usuario'
-    return (
-        m('bienvenida').format(user=name) +
-        "\n\n📺 ANTES DE IRTE...\n\n"
-        "Tenemos un CANAL con AVANCES REALES del contenido.\n"
-        "Muestras en video y foto actualizadas cada 1 hora.\n\n"
-        "✅ Ve la calidad REAL antes de pagar\n"
-        "✅ Contenido auténtico, no capturas editadas\n"
-        "✅ Decide con muestras en vivo\n\n"
-        "👉 @DriveVIPclub"
-    )
+    return m('bienvenida').format(user=name)
 
 def _solo_privado(update: Update) -> bool:
     return update.effective_chat and update.effective_chat.type == 'private'
