@@ -36,6 +36,7 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     PUBLIC_GROUP_ID,
     VIP_GROUP_ID,
+    CHANNEL_ID,
     ADMIN_USERNAME,
     GOOGLE_SHEET_ID,
     GOOGLE_SHEET_RANGE,
@@ -424,6 +425,25 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logging.error(f"Error enviando mensaje automático: {e}")
 
+CANAL_TEXTS = [
+    "\u2728 {carpetas} modelos organizados A-Z en nuestro Drive.\n{videos} VIDEOS \u2022 {fotos} FOTOS\n\n\ud83d\udc47 Accede hoy: @DriveVIPclubBot",
+    "\ud83d\udce6 \u00bfListo para ver lo que tenemos?\n{carpetas} modelos \u2022 {videos} videos \u2022 {fotos} fotos\n\n\ud83d\udc47 Habla con @DriveVIPclubBot",
+    "\ud83d\udd25 Drive actualizado esta semana\n{videos} VIDEOS en HD\n{carpetas} modelos\n\n\ud83d\udc47 \u00bfQuieres entrar? @DriveVIPclubBot",
+    "\ud83d\udcca DATO: tenemos planilla DETALLADA con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\ud83d\udc47 Pide el link: @DriveVIPclubBot",
+    "\ud83c\udf1f Desde $4.990 el acceso m\u00e1s completo.\nSin l\u00edmite de descargas, 24/7.\n\n\ud83d\udc47 Compra aqu\u00ed: @DriveVIPclubBot",
+]
+
+async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
+    idx = context.bot_data.get('canal_idx', 0)
+    text = CANAL_TEXTS[idx % len(CANAL_TEXTS)]
+    for k, v in STATS.items():
+        text = text.replace('{' + k + '}', v)
+    context.bot_data['canal_idx'] = idx + 1
+    try:
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+    except Exception as e:
+        logging.error(f"Error enviando mensaje al canal: {e}")
+
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
     if not reaction or reaction.chat.id != PUBLIC_GROUP_ID or not reaction.user:
@@ -663,6 +683,8 @@ def main() -> None:
         )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
+    for hour in (9, 13, 18, 21):
+        job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _cargar_stats_listado_sync)
