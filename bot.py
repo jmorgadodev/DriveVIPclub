@@ -669,7 +669,7 @@ def _cache_drive_folders():
     return fotos, videos_folders
 
 async def _obtener_media_rotar(pool, idx_key, media_type, loop, bot_data):
-    """Rota por carpetas secuencialmente, busca un archivo no repetido."""
+    """Rota por carpetas secuencialmente, elige archivos sin repetir dentro de cada carpeta."""
     pool_size = len(pool)
     for _ in range(pool_size):
         idx = bot_data.setdefault(idx_key, 0) % pool_size
@@ -681,14 +681,11 @@ async def _obtener_media_rotar(pool, idx_key, media_type, loop, bot_data):
             candidates = [f for f in candidates if int(f.get("size", 0)) <= 10 * 1024 * 1024]
         if not candidates:
             continue
-        used = bot_data.setdefault('used_images', set())
-        available = [f for f in candidates if f['id'] not in used]
-        if not available:
-            used.clear()
-            available = candidates
-        chosen = random.choice(available)
-        used.add(chosen['id'])
-        return chosen
+        candidates.sort(key=lambda f: f['id'])
+        file_key = f'{idx_key}_file_idx'
+        file_idx = bot_data.setdefault(file_key, 0)
+        bot_data[file_key] = (file_idx + 1) % len(candidates)
+        return candidates[file_idx]
     return None
 
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1032,7 +1029,7 @@ def main() -> None:
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (9, 13, 18, 21):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
-    job_queue.run_repeating(publicar_muestra, interval=1800, first=10, name='muestra_30min')
+    job_queue.run_repeating(publicar_muestra, interval=3600, first=10, name='muestra_1h')
     job_queue.run_daily(limpiar_dia, time=time(0, 0, tzinfo=TZ), name='limpieza_diaria')
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
