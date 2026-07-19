@@ -475,27 +475,59 @@ def _list_drive_media(mime_prefix):
         logging.error(f"Error listing drive {mime_prefix}s: {e}")
         return []
 
+def _extract_model(name):
+    parts = name.split(" DriveVIPclub")
+    return parts[0].strip() if len(parts) > 1 else "Otros"
+
+def _group_by_model(files):
+    groups = {}
+    for f in files:
+        model = _extract_model(f.get("name", ""))
+        groups.setdefault(model, []).append(f)
+    return groups
+
 def _cache_drive_media():
     imgs = _list_drive_media("image")
     vids = [v for v in _list_drive_media("video") if int(v.get("size", 0)) <= 10 * 1024 * 1024]
-    logging.info(f"Drive media cached: {len(imgs)} images, {len(vids)} small videos")
-    return imgs, vids
+    imgs_by_model = _group_by_model(imgs)
+    vids_by_model = _group_by_model(vids)
+    models = sorted(imgs_by_model.keys())
+    logging.info(f"Drive media cached: {len(imgs)} images, {len(vids)} videos from {len(models)} models")
+    return imgs_by_model, vids_by_model, models
 
 async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
-    imgs = context.bot_data.get('drive_images')
-    vids = context.bot_data.get('drive_videos')
-    if not imgs or not vids:
+    imgs_by = context.bot_data.get('drive_images')
+    vids_by = context.bot_data.get('drive_videos')
+    models = context.bot_data.get('drive_models')
+    if not imgs_by or not vids_by:
         loop = asyncio.get_event_loop()
-        imgs, vids = await loop.run_in_executor(None, _cache_drive_media)
-        if not imgs:
+        imgs_by, vids_by, models = await loop.run_in_executor(None, _cache_drive_media)
+        if not imgs_by:
             return
-        context.bot_data['drive_images'] = imgs
-        context.bot_data['drive_videos'] = vids
-    used = context.bot_data.setdefault('used_images', set())
+        context.bot_data['drive_images'] = imgs_by
+        context.bot_data['drive_videos'] = vids_by
+        context.bot_data['drive_models'] = models
+    # Rotate models
+    model_idx = context.bot_data.setdefault('model_idx', 0)
+    model_idx = model_idx % len(models)
+    context.bot_data['model_idx'] = model_idx + 1
+    current_model = models[model_idx]
     # Decide type: 70% image, 30% video (if videos available)
-    use_video = vids and random.random() < 0.3
-    pool = vids if use_video else imgs
-    available = [i for i in pool if i['id'] not in used]
+    use_video = vids_by and random.random() < 0.3
+    pool_by = vids_by if use_video else imgs_by
+    pool = pool_by.get(current_model, [])
+    if not pool:
+        for m in models:
+            if m == current_model:
+                continue
+            pool = pool_by.get(m, [])
+            if pool:
+                break
+    if not pool:
+        all_files = [f for lst in pool_by.values() for f in lst]
+        pool = all_files
+    used = context.bot_data.setdefault('used_images', set())
+    available = [f for f in pool if f['id'] not in used]
     if not available:
         used.clear()
         available = pool
@@ -522,7 +554,7 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 caption=caption
             )
         context.application.create_task(eliminar_mensaje(msg, 3600))
-        logging.info(f"Muestra {'video' if is_vid else 'foto'} publicada: {chosen['name']} ({len(used)}/{len(pool)})")
+        logging.info(f"Muestra {current_model} - {'video' if is_vid else 'foto'}: {chosen['name']}")
     except Exception as e:
         logging.error(f"Error publicando muestra: {e}")
         used.discard(chosen['id'])
