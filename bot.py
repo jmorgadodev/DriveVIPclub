@@ -238,6 +238,60 @@ async def registrar_usuario(user_id: int, username: str) -> None:
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, partial(_registrar_usuario_sync, user_id, username))
 
+async def registrar_ingreso(user_id: int, username: str) -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, partial(_registrar_ingreso_sync, user_id, username))
+
+async def registrar_salida(user_id: int) -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, partial(_registrar_salida_sync, user_id))
+
+def _registrar_ingreso_sync(user_id: int, username: str) -> None:
+    try:
+        service = _get_sheets_service()
+        data = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
+        ).execute().get('values', [])
+        now = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
+        for i, row in enumerate(data):
+            if row and row[0] == str(user_id):
+                service.spreadsheets().values().update(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f'Hoja 1!I{i+1}',
+                    valueInputOption='RAW',
+                    body={'values': [[now]]},
+                ).execute()
+                return
+        service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='Hoja 1!A:I',
+            valueInputOption='RAW',
+            body={'values': [[user_id, username, '', '', '', '', '', now, now]]},
+        ).execute()
+        logging.info(f"Ingreso registrado: {username} ({user_id})")
+    except Exception as e:
+        logging.error(f"Error registrando ingreso: {e}")
+
+def _registrar_salida_sync(user_id: int) -> None:
+    try:
+        service = _get_sheets_service()
+        data = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
+        ).execute().get('values', [])
+        now = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
+        for i, row in enumerate(data):
+            if row and row[0] == str(user_id):
+                service.spreadsheets().values().update(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f'Hoja 1!J{i+1}',
+                    valueInputOption='RAW',
+                    body={'values': [[now]]},
+                ).execute()
+                logging.info(f"Salida registrada: {user_id}")
+                return
+    except Exception as e:
+        logging.error(f"Error registrando salida: {e}")
+
 async def eliminar_mensaje(msg, segundos: int) -> None:
     await asyncio.sleep(segundos)
     try:
@@ -328,6 +382,7 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
                 continue
             await registrar_usuario(user.id, user.username or 'sin_username')
+            await registrar_ingreso(user.id, user.username or 'sin_username')
             context.application.create_task(eliminar_mensaje(msg, 7200))
             try:
                 chan_msg = await update.message.reply_text(
@@ -346,6 +401,18 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logging.error(f"Error en nuevo_miembro: {e}")
 
+async def _salida_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        if not update.message or not update.message.left_chat_member:
+            return
+        user = update.message.left_chat_member
+        if user.is_bot:
+            return
+        await registrar_salida(user.id)
+        logging.info(f"Salida detectada via MessageHandler: {user.id}")
+    except Exception as e:
+        logging.error(f"Error en _salida_miembro: {e}")
+
 async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         cm = update.chat_member
@@ -362,6 +429,10 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
             return
         old_status = old.status
         new_status = new.status
+        if new_status in ('left', 'kicked') and old_status in ('member', 'administrator', 'restricted'):
+            await registrar_salida(new.user.id)
+            logging.info(f"Salida detectada via ChatMemberHandler: {new.user.id}")
+            return
         if new_status in ('member', 'administrator') and old_status in ('left', 'kicked', 'restricted'):
             user = new.user
             text = _bienvenida(user)
@@ -376,6 +447,7 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
                         chat_id=chat.id, text=text, parse_mode='HTML'
                     )
                 await registrar_usuario(user.id, user.username or 'sin_username')
+                await registrar_ingreso(user.id, user.username or 'sin_username')
                 context.application.create_task(eliminar_mensaje(msg, 7200))
                 chan_msg = await context.bot.send_message(
                     chat_id=chat.id,
@@ -937,6 +1009,9 @@ def main() -> None:
     application.add_handler(CommandHandler("testdrive", test_drive))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
+    )
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, _salida_miembro)
     )
     application.add_handler(
         ChatMemberHandler(_bienvenida_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER)

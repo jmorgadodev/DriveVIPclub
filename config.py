@@ -10,7 +10,7 @@ CHANNEL_ID         = int(os.getenv('CHANNEL_ID', '0'))
 ADMIN_USERNAME     = os.getenv('ADMIN_USERNAME', '@backadminthree')
 
 GOOGLE_SHEET_ID            = os.getenv('GOOGLE_SHEET_ID', '')
-GOOGLE_SHEET_RANGE         = os.getenv('GOOGLE_SHEET_RANGE', 'Hoja1!A:I')
+GOOGLE_SHEET_RANGE         = os.getenv('GOOGLE_SHEET_RANGE', 'Hoja1!A:J')
 GOOGLE_SERVICE_ACCOUNT     = os.getenv('GOOGLE_SERVICE_ACCOUNT', '')
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON', '')
 GOOGLE_DRIVE_OAUTH_TOKEN_JSON = os.getenv('GOOGLE_DRIVE_OAUTH_TOKEN_JSON', '')
