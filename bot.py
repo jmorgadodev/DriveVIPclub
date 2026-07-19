@@ -70,6 +70,12 @@ _GOOGLE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='google-
 _PAYMENT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mercadopago')
 
 WELCOME_IMAGE_URL = "https://raw.githubusercontent.com/jmorgadodev/DriveVIPclub/master/bienvenida.png"
+LISTADO_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k/edit?gid=0#gid=0"
+)
+WELCOME_DELETE_SECONDS = 15 * 60
+LISTADO_INTERVAL_SECONDS = 3 * 60 * 60
 
 
 def _execute_sheets(request):
@@ -392,8 +398,8 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
     await asyncio.sleep(segundos)
     try:
         await msg.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"No se pudo eliminar mensaje {msg.message_id}: {e}")
 
 def _bienvenida(user):
     name = user.mention_html() if user.username else user.first_name or 'Usuario'
@@ -412,7 +418,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = await _enviar_mensaje_bienvenida(
             context, update.effective_chat.id, _bienvenida(user)
         )
-        context.application.create_task(eliminar_mensaje(msg, 7200))
+        context.application.create_task(
+            eliminar_mensaje(msg, WELCOME_DELETE_SECONDS)
+        )
     except Exception as e:
         logging.error(f"Error en start: {e}")
 
@@ -483,7 +491,9 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
             user = new.user
             try:
                 msg = await _enviar_mensaje_bienvenida(context, chat.id, _bienvenida(user))
-                context.application.create_task(eliminar_mensaje(msg, 14400))
+                context.application.create_task(
+                    eliminar_mensaje(msg, WELCOME_DELETE_SECONDS)
+                )
             except Exception as e:
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
     except Exception as e:
@@ -628,6 +638,28 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
         _trim_set(pm_ids, 500)
     except Exception as e:
         logging.error(f"Error enviando mensaje automático: {e}")
+
+
+async def mensaje_listado(context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
+        "📊 LISTADO COMPLETO DEL DRIVE\n\n"
+        "Revisa directamente todo el contenido disponible antes de pagar:\n\n"
+        f"✅ <a href=\"{LISTADO_URL}\">ABRIR LISTADO COMPLETO</a>\n\n"
+        "Encontrarás cada modelo, video y foto detallados y actualizados."
+    )
+    try:
+        message = await context.bot.send_message(
+            chat_id=PUBLIC_GROUP_ID,
+            text=text,
+            parse_mode='HTML',
+            disable_web_page_preview=True,
+        )
+        context.application.create_task(
+            eliminar_mensaje(message, LISTADO_INTERVAL_SECONDS)
+        )
+    except Exception as e:
+        logging.error(f"Error enviando mensaje del listado: {e}")
+
 
 CANAL_TEXTS = [
     f"\u2728 {{carpetas}} modelos organizados A-Z en nuestro Drive.\n{{videos}} VIDEOS \u2022 {{fotos}} FOTOS\n\n\U0001F447 \u00danete al grupo: {GROUP_LINK}",
@@ -1112,6 +1144,12 @@ def main() -> None:
             time=time(hour, 0, tzinfo=TZ),
             data=key,
             name=key,
+        )
+    for hour in range(0, 24, 3):
+        job_queue.run_daily(
+            mensaje_listado,
+            time=time(hour, 15, tzinfo=TZ),
+            name=f'listado_{hour}',
         )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))

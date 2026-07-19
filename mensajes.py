@@ -19,7 +19,7 @@ FALLBACK = {
         "✅ /semanal o /mensual - Paga directo desde el bot\n"
         "✅ /ventajas - Por qué elegirnos\n"
         "✅ Soporte: {admin} (respuesta inmediata)\n\n"
-        "Este mensaje se borrará en minutos.\n\n"
+        "Este mensaje se borrará en 15 minutos.\n\n"
         "📺 CANAL CON AVANCES REALES\n"
         "Muestras en video y foto actualizadas cada 1 hora.\n\n"
         "✅ Ve la calidad REAL antes de pagar\n"
