@@ -17,6 +17,7 @@ except ImportError:
 from telegram import Update, InputFile
 from telegram.ext import (
     Application,
+    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -344,6 +345,56 @@ async def nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 logging.error(f"Error enviando 'ANTES DE IRTE' a {user.id} en {chat.id}: {e}")
     except Exception as e:
         logging.error(f"Error en nuevo_miembro: {e}")
+
+async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        cm = update.chat_member
+        if not cm:
+            return
+        chat = cm.chat
+        if chat.id not in (PUBLIC_GROUP_ID, VIP_GROUP_ID):
+            return
+        new = cm.new_chat_member
+        old = cm.old_chat_member
+        if not new or not old:
+            return
+        if new.user.is_bot:
+            return
+        old_status = old.status
+        new_status = new.status
+        if new_status in ('member', 'administrator') and old_status in ('left', 'kicked', 'restricted'):
+            user = new.user
+            text = _bienvenida(user)
+            try:
+                if os.path.exists('bienvenida.png'):
+                    with open('bienvenida.png', 'rb') as f:
+                        msg = await context.bot.send_photo(
+                            chat_id=chat.id, photo=InputFile(f), caption=text, parse_mode='HTML'
+                        )
+                else:
+                    msg = await context.bot.send_message(
+                        chat_id=chat.id, text=text, parse_mode='HTML'
+                    )
+                await registrar_usuario(user.id, user.username or 'sin_username')
+                context.application.create_task(eliminar_mensaje(msg, 7200))
+                chan_msg = await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=(
+                        f"📺 {user.mention_html()} ANTES DE IRTE...\n\n"
+                        "Tenemos un CANAL con AVANCES REALES del contenido.\n"
+                        "Muestras en video y foto actualizadas cada 30 min.\n\n"
+                        "✅ Ve la calidad REAL antes de pagar\n"
+                        "✅ Contenido auténtico, no capturas editadas\n"
+                        "✅ Decide con muestras en vivo\n\n"
+                        "👉 @DriveVIPclub"
+                    ),
+                    parse_mode='HTML'
+                )
+                context.application.create_task(eliminar_mensaje(chan_msg, 14400))
+            except Exception as e:
+                logging.error(f"Error en _bienvenida_chat_member enviando msg a {user.id} en {chat.id}: {e}")
+    except Exception as e:
+        logging.error(f"Error en _bienvenida_chat_member: {e}")
 
 async def _crear_preferencia(user_id: int, precio: int, plan: str):
     import requests as req
@@ -886,6 +937,9 @@ def main() -> None:
     application.add_handler(CommandHandler("testdrive", test_drive))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_miembro)
+    )
+    application.add_handler(
+        ChatMemberHandler(_bienvenida_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER)
     )
     application.add_handler(MessageReactionHandler(reaccion))
     application.add_handler(
