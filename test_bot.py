@@ -84,6 +84,26 @@ class _SalesService:
         return self.values_api
 
 
+class _StatsValues:
+    def get(self, **kwargs):
+        return _Request({"values": [
+            ["key", "value"],
+            ["carpetas", "1.611"],
+            ["videos", "26.201"],
+            ["fotos", "42.343"],
+            ["tamano", "+1 TB"],
+            ["updated_at", "2026-07-20T06:00:00-04:00"],
+        ]})
+
+
+class _StatsService:
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return _StatsValues()
+
+
 class GoogleRequestTests(unittest.TestCase):
     def test_sheet_requests_force_cycle_collection(self):
         request = SimpleNamespace(execute=lambda: {"ok": True})
@@ -125,6 +145,36 @@ class SalesSheetTests(unittest.TestCase):
         )
         self.assertEqual(data[1]["range"], "'Hoja 1'!H2:K2")
         self.assertEqual(data[1]["values"][0][1:], ["bot", "", "payment-1"])
+
+
+class WeeklyStatsTests(unittest.IsolatedAsyncioTestCase):
+    def test_startup_uses_cached_stats_without_scanning_public_list(self):
+        with (
+            patch.object(bot, "_get_sheets_service", return_value=_StatsService()),
+            patch.object(bot, "_actualizar_stats_semanales_sync") as refresh,
+        ):
+            loaded = bot._cargar_stats_cache_sync()
+
+        self.assertTrue(loaded)
+        self.assertEqual(bot.STATS["videos"], "26.201")
+        refresh.assert_not_called()
+
+    async def test_weekly_refresh_edits_the_fixed_message(self):
+        telegram_bot = SimpleNamespace(edit_message_text=AsyncMock())
+        context = SimpleNamespace(bot=telegram_bot)
+        with (
+            patch.object(bot, "_actualizar_stats_semanales_sync", return_value=True),
+            patch.object(bot, "m", return_value="updated list"),
+        ):
+            await bot.actualizar_stats_semanales(context)
+
+        telegram_bot.edit_message_text.assert_awaited_once_with(
+            chat_id=bot.PUBLIC_GROUP_ID,
+            message_id=bot.FIXED_LIST_MESSAGE_ID,
+            text="updated list",
+            reply_markup=bot.SALES_MENU,
+            disable_web_page_preview=True,
+        )
 
 
 class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):

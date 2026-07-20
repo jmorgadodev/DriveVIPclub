@@ -28,7 +28,7 @@
 8. El grupo recibe 6 muestras diarias: 10:05, 13:05, 16:05, 19:05, 22:05 y 23:30; se eliminan a medianoche
 9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min)
 10. verificar_proximos_vencer a las 10:00 AM avisa usuarios que expiran mañana
-11. Stats dinámicos se cargan desde el listado sheet al inicio y se refrescan 6:00/18:00
+11. Stats se cargan desde `Estadisticas` al inicio; el listado completo se consulta solo los lunes a las 06:00 Chile y actualiza el mensaje fijado 478
 
 ## Listado Sheet (stats dinámicos)
 - ID: `1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k`

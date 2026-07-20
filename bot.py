@@ -42,6 +42,7 @@ from config import (
     VIP_GROUP_ID,
     CHANNEL_ID,
     ADMIN_USERNAME,
+    FIXED_LIST_MESSAGE_ID,
     GOOGLE_SHEET_ID,
     GOOGLE_SERVICE_ACCOUNT,
     GOOGLE_SERVICE_ACCOUNT_JSON,
@@ -396,34 +397,91 @@ def _cargar_mensajes_sync():
         logging.warning(f"No se pudieron cargar mensajes desde Sheets ({e}), usando fallback.")
         MENSAJES = {k: v.replace('{admin}', ADMIN_USERNAME) for k, v in FALLBACK.items()}
 
-def _cargar_stats_listado_sync():
-    global STATS
+def _obtener_stats_listado_sync():
     if not LISTADO_SHEET_ID:
-        return
+        return {}
+    service = _get_sheets_service()
+    result = _execute_sheets(service.spreadsheets().values().get(
+        spreadsheetId=LISTADO_SHEET_ID, range='A:F'
+    ))
+    rows = result.get('values', [])
+    carpetas = max(0, len(rows) - 1)
+    videos = 0
+    fotos = 0
+    for row in rows[1:]:
+        if len(row) >= 3:
+            try:
+                videos += int(row[1].replace(',', ''))
+            except (TypeError, ValueError):
+                pass
+            try:
+                fotos += int(row[2].replace(',', ''))
+            except (TypeError, ValueError):
+                pass
+    return {
+        'carpetas': f'{carpetas:,}'.replace(',', '.'),
+        'videos': f'{videos:,}'.replace(',', '.'),
+        'fotos': f'{fotos:,}'.replace(',', '.'),
+        'tamano': '+1 TB',
+    }
+
+
+def _guardar_stats_cache_sync(stats):
+    service = _get_sheets_service()
+    rows = [['key', 'value']] + [[key, stats[key]] for key in (
+        'carpetas', 'videos', 'fotos', 'tamano'
+    )]
+    rows.append(['updated_at', datetime.now(TZ).isoformat(timespec='seconds')])
+    _execute_sheets(service.spreadsheets().values().update(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range='Estadisticas!A1:B6',
+        valueInputOption='RAW',
+        body={'values': rows},
+    ))
+
+
+def _actualizar_stats_semanales_sync():
+    global STATS
+    try:
+        stats = _obtener_stats_listado_sync()
+        if not stats:
+            return False
+        _guardar_stats_cache_sync(stats)
+        STATS = stats
+        logging.info(
+            f"Stats semanales actualizados: {STATS['carpetas']} modelos, "
+            f"{STATS['videos']} videos, {STATS['fotos']} fotos"
+        )
+        return True
+    except Exception as e:
+        logging.warning(f"No se pudieron actualizar stats semanales: {e}")
+        return False
+
+
+def _cargar_stats_cache_sync():
+    global STATS
     try:
         service = _get_sheets_service()
-        result = _execute_sheets(service.spreadsheets().values().get(
-            spreadsheetId=LISTADO_SHEET_ID, range='A:F'
-        ))
-        rows = result.get('values', [])
-        carpetas = max(0, len(rows) - 1)
-        videos = 0
-        fotos = 0
-        for r in rows[1:]:
-            if len(r) >= 3:
-                try: videos += int(r[1].replace(',', ''))
-                except: pass
-                try: fotos += int(r[2].replace(',', ''))
-                except: pass
-        STATS = {
-            'carpetas': f'{carpetas:,}'.replace(',', '.'),
-            'videos': f'{videos:,}'.replace(',', '.'),
-            'fotos': f'{fotos:,}'.replace(',', '.'),
-            'tamano': f'+1 TB',
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='Estadisticas!A1:B6',
+        )).get('values', [])
+        cached = {
+            row[0]: row[1]
+            for row in rows[1:]
+            if len(row) >= 2 and row[0] in ('carpetas', 'videos', 'fotos', 'tamano')
         }
-        logging.info(f"Stats listado: {STATS['carpetas']} modelos, {STATS['videos']} videos, {STATS['fotos']} fotos")
+        if len(cached) != 4:
+            return _actualizar_stats_semanales_sync()
+        STATS = cached
+        logging.info(
+            f"Stats cacheados: {STATS['carpetas']} modelos, "
+            f"{STATS['videos']} videos, {STATS['fotos']} fotos"
+        )
+        return True
     except Exception as e:
-        logging.warning(f"No se pudieron cargar stats del listado: {e}")
+        logging.warning(f"No se pudieron cargar stats cacheados: {e}")
+        return _actualizar_stats_semanales_sync()
 
 def m(key):
     text = MENSAJES.get(key, FALLBACK.get(key, ''))
@@ -1004,6 +1062,30 @@ async def limpiar_muestras_grupo(context: ContextTypes.DEFAULT_TYPE) -> None:
     sample_ids.clear()
     logging.info(f"Limpieza de muestras del grupo: {deleted} eliminadas")
 
+
+async def actualizar_stats_semanales(context: ContextTypes.DEFAULT_TYPE) -> None:
+    loop = asyncio.get_running_loop()
+    updated = await loop.run_in_executor(
+        _GOOGLE_EXECUTOR,
+        _actualizar_stats_semanales_sync,
+    )
+    if not updated:
+        return
+    try:
+        await context.bot.edit_message_text(
+            chat_id=PUBLIC_GROUP_ID,
+            message_id=FIXED_LIST_MESSAGE_ID,
+            text=m('lista'),
+            reply_markup=SALES_MENU,
+            disable_web_page_preview=True,
+        )
+        logging.info(f"Mensaje fijado {FIXED_LIST_MESSAGE_ID} actualizado")
+    except Exception as e:
+        if 'Message is not modified' in str(e):
+            logging.info(f"Mensaje fijado {FIXED_LIST_MESSAGE_ID} ya estaba actualizado")
+        else:
+            logging.error(f"No se pudo actualizar el mensaje fijado: {e}")
+
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
     if not reaction or reaction.chat.id != PUBLIC_GROUP_ID or not reaction.user:
@@ -1324,7 +1406,7 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 def main() -> None:
     _run_google_sync(_cargar_mensajes_sync)
-    _run_google_sync(_cargar_stats_listado_sync)
+    _run_google_sync(_cargar_stats_cache_sync)
     _run_google_sync(_cargar_estado_pagos_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
@@ -1375,11 +1457,12 @@ def main() -> None:
         time=time(0, 0, tzinfo=TZ),
         name='limpieza_muestras_grupo',
     )
-    async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(_GOOGLE_EXECUTOR, _cargar_stats_listado_sync)
-    job_queue.run_daily(refrescar_stats, time=time(6, 0, tzinfo=TZ))
-    job_queue.run_daily(refrescar_stats, time=time(18, 0, tzinfo=TZ))
+    job_queue.run_daily(
+        actualizar_stats_semanales,
+        time=time(6, 0, tzinfo=TZ),
+        days=(1,),
+        name='stats_lunes_06',
+    )
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':

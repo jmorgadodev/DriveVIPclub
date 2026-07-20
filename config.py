@@ -8,6 +8,7 @@ PUBLIC_GROUP_ID    = int(os.getenv('PUBLIC_GROUP_ID', '0'))
 VIP_GROUP_ID       = int(os.getenv('VIP_GROUP_ID', '0'))
 CHANNEL_ID         = int(os.getenv('CHANNEL_ID', '0'))
 ADMIN_USERNAME     = os.getenv('ADMIN_USERNAME', '@backadminthree')
+FIXED_LIST_MESSAGE_ID = int(os.getenv('FIXED_LIST_MESSAGE_ID', '478'))
 
 GOOGLE_SHEET_ID            = os.getenv('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEET_RANGE         = os.getenv('GOOGLE_SHEET_RANGE', 'Hoja1!A:J')
