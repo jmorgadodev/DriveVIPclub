@@ -23,6 +23,7 @@ class _TelegramBot:
     def __init__(self):
         self.photos_sent = 0
         self.photo_chat_ids = []
+        self.photo_media = []
         self.deleted_message_ids = []
 
     async def send_video(self, **kwargs):
@@ -31,7 +32,11 @@ class _TelegramBot:
     async def send_photo(self, **kwargs):
         self.photos_sent += 1
         self.photo_chat_ids.append(kwargs["chat_id"])
-        return SimpleNamespace(message_id=1)
+        self.photo_media.append(kwargs["photo"])
+        return SimpleNamespace(
+            message_id=self.photos_sent,
+            photo=[SimpleNamespace(file_id="telegram-photo-id")],
+        )
 
     async def delete_message(self, **kwargs):
         self.deleted_message_ids.append(kwargs["message_id"])
@@ -65,8 +70,12 @@ class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):
         ):
             await bot.publicar_muestra(context)
 
-        self.assertEqual(telegram_bot.photos_sent, 1)
-        self.assertEqual(telegram_bot.photo_chat_ids, [bot.PUBLIC_GROUP_ID])
+        self.assertEqual(telegram_bot.photos_sent, 2)
+        self.assertEqual(
+            telegram_bot.photo_chat_ids,
+            [bot.PUBLIC_GROUP_ID, bot.CHANNEL_ID],
+        )
+        self.assertEqual(telegram_bot.photo_media[1], "telegram-photo-id")
         self.assertEqual(context.bot_data["group_sample_ids"], {1})
 
     async def test_midnight_cleanup_deletes_group_samples(self):

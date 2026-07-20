@@ -833,6 +833,7 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 photo=InputFile(BytesIO(data), filename="muestra.jpg"),
                 caption=caption,
             )
+            is_vid = False
         except Exception as fallback_error:
             logging.error(f"Error publicando foto de respaldo: {fallback_error}")
             return
@@ -841,7 +842,25 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
     promo_ids = context.bot_data.setdefault('promo_message_ids', set())
     promo_ids.add(msg.message_id)
     _trim_set(promo_ids, 500)
-    logging.info("Muestra publicada en el grupo")
+    try:
+        if is_vid:
+            channel_message = await context.bot.send_video(
+                chat_id=CHANNEL_ID,
+                video=msg.video.file_id,
+                caption=caption,
+            )
+        else:
+            channel_message = await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=msg.photo[-1].file_id,
+                caption=caption,
+            )
+        context.application.create_task(
+            eliminar_mensaje(channel_message, SCHEDULED_DELETE_SECONDS)
+        )
+        logging.info("Muestra publicada en el grupo y el canal")
+    except Exception as e:
+        logging.warning(f"Muestra publicada en el grupo, pero no en el canal: {e}")
 
 
 async def limpiar_muestras_grupo(context: ContextTypes.DEFAULT_TYPE) -> None:

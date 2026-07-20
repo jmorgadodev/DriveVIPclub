@@ -69,12 +69,13 @@
 - Primeros posts de bienvenida fijados en el canal
 
 ## Grupo público
-- publicar_muestra(): 1 media cada hora a los :05 Chile en el grupo público; borrar a las 00:00
+- publicar_muestra(): 1 media cada hora a los :05 Chile en el grupo y canal
   - Carga imágenes y videos ≤20MB vía API Drive (paginación 200), cachea carpetas en bot_data
   - 70% foto / 30% video; videos de hasta 20MB
   - Selección determinista por bloque horario para evitar repeticiones consecutivas
-  - Descarga vía get_media() (sin almacenamiento intermedio) y envía como InputFile(BytesIO)
+  - Descarga y sube una vez al grupo; reutiliza el `file_id` de Telegram para el canal
   - Usa send_photo() para imágenes, send_video() para videos
+  - Las muestras del grupo se borran a las 00:00; las del canal después de 3h
 - Los mensajes de miembros que abandonan el grupo se eliminan automáticamente
 
 ## Tools
