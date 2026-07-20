@@ -4,6 +4,8 @@ FALLBACK = {
     'bienvenida': (
         "{user} 🇨🇱 ¡Bienvenido a DriveVIPclub!\n\n"
         "📂 {carpetas} modelos organizados de la A a la Z\n"
+        "🎬 {videos} videos\n"
+        "📸 {fotos} fotos\n"
         "🔄 Actualizaciones todas las semanas\n"
         "💾 Descargas sin límites\n\n"
         "📌 Revisa los mensajes fijados:\n"
