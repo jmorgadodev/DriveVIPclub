@@ -49,6 +49,24 @@ class _Application:
         coroutine.close()
 
 
+class GoogleRequestTests(unittest.TestCase):
+    def test_sheet_requests_force_cycle_collection(self):
+        request = SimpleNamespace(execute=lambda: {"ok": True})
+        with patch.object(bot.gc, "collect") as collect:
+            result = bot._execute_sheets(request)
+
+        self.assertEqual(result, {"ok": True})
+        collect.assert_called_once_with()
+
+    def test_drive_requests_force_cycle_collection(self):
+        request = SimpleNamespace(execute=lambda: b"media")
+        with patch.object(bot.gc, "collect") as collect:
+            result = bot._execute_drive(request)
+
+        self.assertEqual(result, b"media")
+        collect.assert_called_once_with()
+
+
 class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):
     async def test_uses_photo_when_video_upload_times_out(self):
         telegram_bot = _TelegramBot()

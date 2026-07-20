@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -94,13 +95,21 @@ SALES_MENU = InlineKeyboardMarkup([
 
 
 def _execute_sheets(request):
-    with _SHEETS_API_LOCK:
-        return request.execute()
+    try:
+        with _SHEETS_API_LOCK:
+            return request.execute()
+    finally:
+        del request
+        gc.collect()
 
 
 def _execute_drive(request):
-    with _DRIVE_API_LOCK:
-        return request.execute()
+    try:
+        with _DRIVE_API_LOCK:
+            return request.execute()
+    finally:
+        del request
+        gc.collect()
 
 
 def _run_google_sync(func, *args):
