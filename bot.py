@@ -61,6 +61,7 @@ MENSAJES = {}
 STATS = {}
 PENDING_GMAIL = {}
 PROCESSED_PAYMENTS = set()
+PENDING_DELETIONS = {}
 
 _SHEETS_SERVICE = None
 _DRIVE_SERVICE = None
@@ -80,6 +81,7 @@ WELCOME_DELETE_SECONDS = 15 * 60
 SCHEDULED_DELETE_SECONDS = 3 * 60 * 60
 MAX_SAMPLE_VIDEO_BYTES = 20 * 1024 * 1024
 MAX_SALES_ROWS = 5000
+MAX_PENDING_DELETIONS = 500
 ADMIN_URL = f"https://t.me/{ADMIN_USERNAME.lstrip('@')}"
 SALES_MENU = InlineKeyboardMarkup([
     [
@@ -532,6 +534,111 @@ async def eliminar_mensaje(msg, segundos: int) -> None:
     except Exception as e:
         logging.warning(f"No se pudo eliminar mensaje {msg.message_id}: {e}")
 
+
+def _cargar_eliminaciones_sync() -> None:
+    PENDING_DELETIONS.clear()
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f'Eliminaciones!A2:C{MAX_PENDING_DELETIONS + 1}',
+        )).get('values', [])
+        for row in rows:
+            if len(row) < 3:
+                continue
+            try:
+                key = (int(row[0]), int(row[1]))
+                PENDING_DELETIONS[key] = float(row[2])
+            except (TypeError, ValueError):
+                continue
+        logging.info(f"Eliminaciones pendientes cargadas: {len(PENDING_DELETIONS)}")
+    except Exception as e:
+        logging.warning(f"No se pudieron cargar eliminaciones pendientes: {e}")
+
+
+def _guardar_eliminacion_sync(chat_id: int, message_id: int, delete_at: float) -> None:
+    try:
+        service = _get_sheets_service()
+        _execute_sheets(service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='Eliminaciones!A:C',
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body={'values': [[str(chat_id), str(message_id), str(delete_at)]]},
+        ))
+    except Exception as e:
+        logging.warning(f"No se pudo persistir eliminación {message_id}: {e}")
+
+
+def _reemplazar_eliminaciones_sync(rows=None) -> None:
+    try:
+        service = _get_sheets_service()
+        _execute_sheets(service.spreadsheets().values().clear(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='Eliminaciones!A2:C',
+        ))
+        if rows:
+            _execute_sheets(service.spreadsheets().values().update(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f'Eliminaciones!A2:C{len(rows) + 1}',
+                valueInputOption='RAW',
+                body={'values': rows},
+            ))
+    except Exception as e:
+        logging.warning(f"No se pudieron guardar eliminaciones pendientes: {e}")
+
+
+async def programar_eliminacion_persistente(msg, segundos: int) -> None:
+    key = (msg.chat_id, msg.message_id)
+    if key not in PENDING_DELETIONS and len(PENDING_DELETIONS) >= MAX_PENDING_DELETIONS:
+        logging.error("Límite de eliminaciones pendientes alcanzado; borrando bienvenida ahora")
+        await msg.delete()
+        return
+    delete_at = datetime.now(TZ).timestamp() + segundos
+    PENDING_DELETIONS[key] = delete_at
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        _GOOGLE_EXECUTOR,
+        _guardar_eliminacion_sync,
+        msg.chat_id,
+        msg.message_id,
+        delete_at,
+    )
+
+
+async def limpiar_eliminaciones_pendientes(context: ContextTypes.DEFAULT_TYPE) -> None:
+    now = datetime.now(TZ).timestamp()
+    due = [key for key, delete_at in PENDING_DELETIONS.items() if delete_at <= now]
+    if not due:
+        return
+    changed = False
+    for chat_id, message_id in due:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            PENDING_DELETIONS.pop((chat_id, message_id), None)
+            changed = True
+            logging.info(f"Bienvenida {message_id} eliminada en {chat_id}")
+        except Exception as e:
+            if 'message to delete not found' in str(e).lower():
+                PENDING_DELETIONS.pop((chat_id, message_id), None)
+                changed = True
+            else:
+                logging.warning(f"No se pudo eliminar bienvenida {message_id}: {e}")
+    if changed:
+        rows = [
+            [str(chat_id), str(message_id), str(delete_at)]
+            for (chat_id, message_id), delete_at in sorted(
+                PENDING_DELETIONS.items(),
+                key=lambda item: item[1],
+            )
+        ]
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR,
+            _reemplazar_eliminaciones_sync,
+            rows,
+        )
+
 def _bienvenida(user):
     name = user.mention_html() if user.username else user.first_name or 'Usuario'
     return m('bienvenida').format(user=name)
@@ -563,9 +670,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = await _enviar_mensaje_bienvenida(
             context, update.effective_chat.id, _bienvenida(user)
         )
-        context.application.create_task(
-            eliminar_mensaje(msg, WELCOME_DELETE_SECONDS)
-        )
+        await programar_eliminacion_persistente(msg, WELCOME_DELETE_SECONDS)
     except Exception as e:
         logging.error(f"Error en start: {e}")
 
@@ -647,8 +752,9 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
                 await registrar_evento(user, 'group_join', 'public_group')
             try:
                 msg = await _enviar_mensaje_bienvenida(context, chat.id, _bienvenida(user))
-                context.application.create_task(
-                    eliminar_mensaje(msg, WELCOME_DELETE_SECONDS)
+                await programar_eliminacion_persistente(
+                    msg,
+                    WELCOME_DELETE_SECONDS,
                 )
             except Exception as e:
                 logging.error(f"Error enviando bienvenida a {user.id} en {chat.id}: {e}")
@@ -1408,6 +1514,7 @@ def main() -> None:
     _run_google_sync(_cargar_mensajes_sync)
     _run_google_sync(_cargar_stats_cache_sync)
     _run_google_sync(_cargar_estado_pagos_sync)
+    _run_google_sync(_cargar_eliminaciones_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
     application = (
@@ -1441,6 +1548,12 @@ def main() -> None:
         interval=30,
         first=5,
         name='poll_payments',
+    )
+    job_queue.run_repeating(
+        limpiar_eliminaciones_pendientes,
+        interval=60,
+        first=5,
+        name='limpiar_bienvenidas',
     )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))

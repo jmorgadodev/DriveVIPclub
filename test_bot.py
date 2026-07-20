@@ -261,5 +261,22 @@ class PrivateMenuTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class DurableDeletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_overdue_welcome_is_deleted_after_restart(self):
+        telegram_bot = _TelegramBot()
+        context = SimpleNamespace(bot=telegram_bot)
+        bot.PENDING_DELETIONS.clear()
+        bot.PENDING_DELETIONS[(bot.PUBLIC_GROUP_ID, 10)] = 0
+        bot.PENDING_DELETIONS[(bot.PUBLIC_GROUP_ID, 11)] = 9999999999
+
+        with patch.object(bot, "_reemplazar_eliminaciones_sync") as persist:
+            await bot.limpiar_eliminaciones_pendientes(context)
+
+        self.assertEqual(telegram_bot.deleted_message_ids, [10])
+        self.assertNotIn((bot.PUBLIC_GROUP_ID, 10), bot.PENDING_DELETIONS)
+        self.assertIn((bot.PUBLIC_GROUP_ID, 11), bot.PENDING_DELETIONS)
+        persist.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

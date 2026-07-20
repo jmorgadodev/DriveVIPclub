@@ -26,7 +26,7 @@
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
 8. El grupo recibe 6 muestras diarias: 10:05, 13:05, 16:05, 19:05, 22:05 y 23:30; se eliminan a medianoche
-9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min)
+9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min mediante cola persistente `Eliminaciones`)
 10. verificar_proximos_vencer a las 10:00 AM avisa usuarios que expiran mañana
 11. Stats se cargan desde `Estadisticas` al inicio; el listado completo se consulta solo los lunes a las 06:00 Chile y actualiza el mensaje fijado 478
 
