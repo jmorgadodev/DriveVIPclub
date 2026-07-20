@@ -24,6 +24,7 @@ class _TelegramBot:
         self.photos_sent = 0
         self.photo_chat_ids = []
         self.photo_media = []
+        self.photo_reply_markups = []
         self.deleted_message_ids = []
 
     async def send_video(self, **kwargs):
@@ -33,6 +34,7 @@ class _TelegramBot:
         self.photos_sent += 1
         self.photo_chat_ids.append(kwargs["chat_id"])
         self.photo_media.append(kwargs["photo"])
+        self.photo_reply_markups.append(kwargs.get("reply_markup"))
         return SimpleNamespace(
             message_id=self.photos_sent,
             photo=[SimpleNamespace(file_id="telegram-photo-id")],
@@ -76,6 +78,10 @@ class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):
             [bot.PUBLIC_GROUP_ID, bot.CHANNEL_ID],
         )
         self.assertEqual(telegram_bot.photo_media[1], "telegram-photo-id")
+        self.assertEqual(
+            telegram_bot.photo_reply_markups,
+            [bot.SALES_MENU, bot.SALES_MENU],
+        )
         self.assertEqual(context.bot_data["group_sample_ids"], {1})
 
     async def test_midnight_cleanup_deletes_group_samples(self):
@@ -105,6 +111,26 @@ class OcultarSalidaTests(unittest.IsolatedAsyncioTestCase):
         await bot.ocultar_salida(update, SimpleNamespace())
 
         message.delete.assert_awaited_once()
+
+
+class PrivateMenuTests(unittest.IsolatedAsyncioTestCase):
+    async def test_free_text_receives_sales_menu(self):
+        user = SimpleNamespace(id=123, username="buyer")
+        message = SimpleNamespace(text="hola", reply_text=AsyncMock())
+        update = SimpleNamespace(
+            effective_user=user,
+            effective_chat=SimpleNamespace(type="private"),
+            message=message,
+        )
+
+        with patch.object(bot, "registrar_evento", new=AsyncMock()) as track:
+            await bot.manejar_mensaje(update, SimpleNamespace())
+
+        track.assert_awaited_once_with(user, "private_message", "free_text")
+        message.reply_text.assert_awaited_once_with(
+            "¿Qué te gustaría revisar? Elige una opción para continuar:",
+            reply_markup=bot.SALES_MENU,
+        )
 
 
 if __name__ == "__main__":

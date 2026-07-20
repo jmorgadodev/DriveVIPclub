@@ -15,7 +15,7 @@ try:
 except ImportError:
     from backports import zoneinfo as ZoneInfo
 
-from telegram import Update, InputFile
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import (
     Application,
     ChatMemberHandler,
@@ -77,6 +77,20 @@ LISTADO_URL = (
 WELCOME_DELETE_SECONDS = 15 * 60
 SCHEDULED_DELETE_SECONDS = 3 * 60 * 60
 MAX_SAMPLE_VIDEO_BYTES = 20 * 1024 * 1024
+ADMIN_URL = f"https://t.me/{ADMIN_USERNAME.lstrip('@')}"
+SALES_MENU = InlineKeyboardMarkup([
+    [
+        InlineKeyboardButton(
+            "Ver planes",
+            url="https://t.me/DriveVIPclubBot?start=planes",
+        ),
+        InlineKeyboardButton(
+            "Revisar listado",
+            url="https://t.me/DriveVIPclubBot?start=lista",
+        ),
+    ],
+    [InlineKeyboardButton("Hablar con el admin", url=ADMIN_URL)],
+])
 
 
 def _execute_sheets(request):
@@ -363,6 +377,40 @@ def m(key):
 
 TZ = ZoneInfo("America/Santiago")
 
+
+def _registrar_evento_sync(user_id: int, username: str, event: str, source: str) -> None:
+    try:
+        service = _get_sheets_service()
+        _execute_sheets(service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='Embudo!A:E',
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body={'values': [[
+                datetime.now(TZ).isoformat(timespec='seconds'),
+                str(user_id),
+                username,
+                event,
+                source,
+            ]]},
+        ))
+    except Exception as e:
+        logging.warning(f"No se pudo registrar evento {event} para {user_id}: {e}")
+
+
+async def registrar_evento(user, event: str, source: str = '') -> None:
+    if not user:
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        _GOOGLE_EXECUTOR,
+        _registrar_evento_sync,
+        user.id,
+        user.username or '',
+        event,
+        source,
+    )
+
 def _registrar_usuario_sync(user_id: int, username: str) -> None:
     try:
         service = _get_sheets_service()
@@ -416,6 +464,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         if not user or not update.message:
             return
+        source = context.args[0] if context.args else 'directo'
+        await registrar_evento(user, 'bot_start', source)
+        if source == 'planes':
+            await registrar_evento(user, 'view_prices', 'sample_button')
+            await update.message.reply_text(m('precios'), reply_markup=SALES_MENU)
+            return
+        if source == 'lista':
+            await registrar_evento(user, 'view_list', 'sample_button')
+            await update.message.reply_text(
+                m('lista'),
+                reply_markup=SALES_MENU,
+                disable_web_page_preview=True,
+            )
+            return
         msg = await _enviar_mensaje_bienvenida(
             context, update.effective_chat.id, _bienvenida(user)
         )
@@ -429,7 +491,8 @@ async def precios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
         await update.message.reply_text("ℹ️ Escríbeme en privado para ver los precios: @DriveVIPclubBot")
         return
-    await update.message.reply_text(m('precios'))
+    await registrar_evento(update.effective_user, 'view_prices', 'command')
+    await update.message.reply_text(m('precios'), reply_markup=SALES_MENU)
 
 async def contenido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
@@ -447,7 +510,12 @@ async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
         await update.message.reply_text("ℹ️ Escríbeme en privado para ver el listado: @DriveVIPclubBot")
         return
-    await update.message.reply_text(m('lista'))
+    await registrar_evento(update.effective_user, 'view_list', 'command')
+    await update.message.reply_text(
+        m('lista'),
+        reply_markup=SALES_MENU,
+        disable_web_page_preview=True,
+    )
 
 async def ventajas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
@@ -467,6 +535,7 @@ async def _enviar_mensaje_bienvenida(context, chat_id, text):
         photo=WELCOME_IMAGE_URL,
         caption=text,
         parse_mode='HTML',
+        reply_markup=SALES_MENU,
     )
 
 async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -487,9 +556,13 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
         new_status = new.status
         logging.info(f"ChatMember update: user={new.user.id} old={old_status} new={new_status}")
         if new_status in ('left', 'kicked') and old_status != new_status:
+            if chat.id == PUBLIC_GROUP_ID:
+                await registrar_evento(new.user, 'group_leave', 'public_group')
             return
         if new_status in ('member', 'administrator') and old_status not in ('member', 'administrator'):
             user = new.user
+            if chat.id == PUBLIC_GROUP_ID:
+                await registrar_evento(user, 'group_join', 'public_group')
             try:
                 msg = await _enviar_mensaje_bienvenida(context, chat.id, _bienvenida(user))
                 context.application.create_task(
@@ -547,9 +620,11 @@ async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
     try:
+        await registrar_evento(user, 'plan_selected', 'semanal')
         await registrar_usuario(user.id, user.username or 'sin_username')
         data = await _crear_preferencia(user.id, 4990, 'Semanal')
         if 'init_point' in data:
+            await registrar_evento(user, 'payment_link_created', 'semanal')
             await update.message.reply_text(f"💎 Plan Semanal $4.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
         else:
             await update.message.reply_text("❌ Error generando link. Contacta al admin.")
@@ -567,9 +642,11 @@ async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
     try:
+        await registrar_evento(user, 'plan_selected', 'mensual')
         await registrar_usuario(user.id, user.username or 'sin_username')
         data = await _crear_preferencia(user.id, 8990, 'Mensual')
         if 'init_point' in data:
+            await registrar_evento(user, 'payment_link_created', 'mensual')
             await update.message.reply_text(f"💎 Plan Mensual $8.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
         else:
             await update.message.reply_text("❌ Error generando link. Contacta al admin.")
@@ -615,6 +692,14 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await update.message.reply_photo(photo=InputFile(f), caption=caption)
         else:
             await update.message.reply_text(caption)
+        await registrar_evento(user, 'access_granted', 'gmail_received')
+        return
+
+    await registrar_evento(user, 'private_message', 'free_text')
+    await update.message.reply_text(
+        "¿Qué te gustaría revisar? Elige una opción para continuar:",
+        reply_markup=SALES_MENU,
+    )
 
 async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
     key = context.job.data
@@ -807,13 +892,15 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
             msg = await context.bot.send_video(
                 chat_id=PUBLIC_GROUP_ID,
                 video=InputFile(BytesIO(data), filename="muestra.mp4"),
-                caption=caption
+                caption=caption,
+                reply_markup=SALES_MENU,
             )
         else:
             msg = await context.bot.send_photo(
                 chat_id=PUBLIC_GROUP_ID,
                 photo=InputFile(BytesIO(data), filename="muestra.jpg"),
-                caption=caption
+                caption=caption,
+                reply_markup=SALES_MENU,
             )
     except Exception as e:
         if not is_vid:
@@ -832,6 +919,7 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=PUBLIC_GROUP_ID,
                 photo=InputFile(BytesIO(data), filename="muestra.jpg"),
                 caption=caption,
+                reply_markup=SALES_MENU,
             )
             is_vid = False
         except Exception as fallback_error:
@@ -848,12 +936,14 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=CHANNEL_ID,
                 video=msg.video.file_id,
                 caption=caption,
+                reply_markup=SALES_MENU,
             )
         else:
             channel_message = await context.bot.send_photo(
                 chat_id=CHANNEL_ID,
                 photo=msg.photo[-1].file_id,
                 caption=caption,
+                reply_markup=SALES_MENU,
             )
         context.application.create_task(
             eliminar_mensaje(channel_message, SCHEDULED_DELETE_SECONDS)
@@ -975,6 +1065,15 @@ async def _poll_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
         _trim_set(PROCESSED_PAYMENTS, 2000)
         if result['status'] == 'duplicate':
             continue
+
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR,
+            _registrar_evento_sync,
+            user_id,
+            '',
+            'payment_approved',
+            plan,
+        )
 
         renewal = result['renewal']
         needs_email = result['needs_email']
@@ -1214,11 +1313,11 @@ def main() -> None:
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (10, 15, 20):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
-    for hour in range(24):
+    for hour, minute in ((10, 5), (13, 5), (16, 5), (19, 5), (22, 5), (23, 30)):
         job_queue.run_daily(
             publicar_muestra,
-            time=time(hour, 5, tzinfo=TZ),
-            name=f'muestra_{hour}',
+            time=time(hour, minute, tzinfo=TZ),
+            name=f'muestra_{hour}_{minute}',
         )
     job_queue.run_daily(
         limpiar_muestras_grupo,

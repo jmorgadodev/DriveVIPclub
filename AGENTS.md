@@ -23,7 +23,7 @@
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
-8. El grupo recibe una muestra desde Drive cada hora a los :05; se eliminan todas a medianoche
+8. El grupo recibe 6 muestras diarias: 10:05, 13:05, 16:05, 19:05, 22:05 y 23:30; se eliminan a medianoche
 9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min)
 10. verificar_proximos_vencer a las 10:00 AM avisa usuarios que expiran mañana
 11. Stats dinámicos se cargan desde el listado sheet al inicio y se refrescan 6:00/18:00
@@ -69,7 +69,7 @@
 - Primeros posts de bienvenida fijados en el canal
 
 ## Grupo público
-- publicar_muestra(): 1 media cada hora a los :05 Chile en el grupo y canal
+- publicar_muestra(): 6 medias diarias en el grupo y canal
   - Carga imágenes y videos ≤20MB vía API Drive (paginación 200), cachea carpetas en bot_data
   - 70% foto / 30% video; videos de hasta 20MB
   - Selección determinista por bloque horario para evitar repeticiones consecutivas
@@ -77,6 +77,7 @@
   - Usa send_photo() para imágenes, send_video() para videos
   - Las muestras del grupo se borran a las 00:00; las del canal después de 3h
 - Los mensajes de miembros que abandonan el grupo se eliminan automáticamente
+- La pestaña `Embudo` registra ingresos, salidas, aperturas, planes, links de pago y pagos aprobados
 
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
