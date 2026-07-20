@@ -76,6 +76,7 @@ LISTADO_URL = (
 )
 WELCOME_DELETE_SECONDS = 15 * 60
 SCHEDULED_DELETE_SECONDS = 3 * 60 * 60
+MAX_SAMPLE_VIDEO_BYTES = 20 * 1024 * 1024
 
 
 def _execute_sheets(request):
@@ -499,6 +500,16 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logging.error(f"Error en _bienvenida_chat_member: {e}")
 
+
+async def ocultar_salida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message or message.chat_id != PUBLIC_GROUP_ID or not message.left_chat_member:
+        return
+    try:
+        await message.delete()
+    except Exception as e:
+        logging.warning(f"No se pudo ocultar la salida de {message.left_chat_member.id}: {e}")
+
 def _crear_preferencia_sync(user_id: int, precio: int, plan: str):
     import requests as req
     pref = req.post('https://api.mercadopago.com/checkout/preferences', json={
@@ -686,12 +697,12 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error enviando mensaje al canal: {e}")
 
 CAPTIONS_SAMPLES = [
-    f"\U0001F4F7 Sample exclusivo de nuestro contenido.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{tamano}}\n\n\U0001F447 Quieres ver mas? {GROUP_LINK}",
-    f"\U0001F525 Esto es solo una muestra.\nTenemos {{carpetas}} modelos organizados A-Z.\n\n\U0001F447 Accede hoy: {GROUP_LINK}",
-    f"\U0001F48E Contenido HD todas las semanas.\nSin limite de descargas, 24/7.\n\n\U0001F447 Habla con nosotros: {GROUP_LINK}",
-    f"\U0001F4CA Planilla detallada con todo el contenido.\nVes EXACTAMENTE lo que hay antes de pagar.\n\n\U0001F447 Info: {GROUP_LINK}",
-    f"\U0001F31F Desde $4.990 el plan semanal.\nMercadoPago, acceso inmediato.\n\n\U0001F447 Compra aqui: {GROUP_LINK}",
-    f"\U0001F4E6 Actualizaciones todas las semanas.\nContenido fresco sin costo extra.\n\n\U0001F447 Unete: {GROUP_LINK}",
+    f"\U0001F4F7 Muestra real del Drive.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{tamano}}\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F525 Esto es solo una muestra.\nTenemos {{carpetas}} modelos organizados de la A a la Z.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F48E Contenido nuevo todas las semanas.\nAcceso 24/7 y descargas sin límites.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F4CA Revisa nombres y cantidades en /lista antes de pagar.\nTransparencia total sobre el contenido.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F31F Plan semanal $4.990 \u2022 Plan mensual $8.990\nPago seguro mediante MercadoPago.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F4E6 El Drive se actualiza todas las semanas.\nEncuentra cada carpeta rápidamente.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
 ]
 
 def _list_folder_files(folder_id, fields="nextPageToken,files(id,name,size,mimeType)"):
@@ -749,7 +760,10 @@ async def _obtener_media_horaria(pool, media_type, loop, slot):
         files = await loop.run_in_executor(_GOOGLE_EXECUTOR, _list_folder_files, folder["id"])
         candidates = [f for f in files if media_type in f.get("mimeType", "")]
         if media_type == "video":
-            candidates = [f for f in candidates if int(f.get("size", 0)) <= 10 * 1024 * 1024]
+            candidates = [
+                f for f in candidates
+                if int(f.get("size", 0)) <= MAX_SAMPLE_VIDEO_BYTES
+            ]
         if not candidates:
             continue
         candidates.sort(key=lambda f: f['id'])
@@ -791,13 +805,13 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         if is_vid:
             msg = await context.bot.send_video(
-                chat_id=CHANNEL_ID,
+                chat_id=PUBLIC_GROUP_ID,
                 video=InputFile(BytesIO(data), filename="muestra.mp4"),
                 caption=caption
             )
         else:
             msg = await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
+                chat_id=PUBLIC_GROUP_ID,
                 photo=InputFile(BytesIO(data), filename="muestra.jpg"),
                 caption=caption
             )
@@ -815,17 +829,38 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 lambda: _execute_drive(drive.files().get_media(fileId=fallback['id']))
             )
             msg = await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
+                chat_id=PUBLIC_GROUP_ID,
                 photo=InputFile(BytesIO(data), filename="muestra.jpg"),
                 caption=caption,
             )
         except Exception as fallback_error:
             logging.error(f"Error publicando foto de respaldo: {fallback_error}")
             return
-    context.application.create_task(
-        eliminar_mensaje(msg, SCHEDULED_DELETE_SECONDS)
-    )
-    logging.info("Muestra publicada")
+    sample_ids = context.bot_data.setdefault('group_sample_ids', set())
+    sample_ids.add(msg.message_id)
+    promo_ids = context.bot_data.setdefault('promo_message_ids', set())
+    promo_ids.add(msg.message_id)
+    _trim_set(promo_ids, 500)
+    logging.info("Muestra publicada en el grupo")
+
+
+async def limpiar_muestras_grupo(context: ContextTypes.DEFAULT_TYPE) -> None:
+    sample_ids = context.bot_data.get('group_sample_ids', set())
+    deleted = 0
+    for message_id in list(sample_ids):
+        try:
+            await context.bot.delete_message(
+                chat_id=PUBLIC_GROUP_ID,
+                message_id=message_id,
+            )
+            deleted += 1
+        except Exception as e:
+            logging.warning(f"No se pudo eliminar la muestra {message_id}: {e}")
+    promo_ids = context.bot_data.get('promo_message_ids')
+    if promo_ids:
+        promo_ids.difference_update(sample_ids)
+    sample_ids.clear()
+    logging.info(f"Limpieza de muestras del grupo: {deleted} eliminadas")
 
 async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reaction = update.message_reaction
@@ -1104,10 +1139,14 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             total_imgs += sum(1 for x in files if "image" in x.get("mimeType", ""))
         for v in vids:
             files = await loop.run_in_executor(_GOOGLE_EXECUTOR, _list_folder_files, v["id"])
-            total_vids += sum(1 for x in files if "video" in x.get("mimeType", "") and int(x.get("size", 0)) <= 10 * 1024 * 1024)
+            total_vids += sum(
+                1 for x in files
+                if "video" in x.get("mimeType", "")
+                and int(x.get("size", 0)) <= MAX_SAMPLE_VIDEO_BYTES
+            )
         await msg.edit_text(
             f"Drive OK\n\nImagenes: {total_imgs}\n"
-            f"Videos <=10MB: {total_vids}\n"
+            f"Videos <=20MB: {total_vids}\n"
             f"Carpetas Fotos: {len(fotos)}\n"
             f"Carpetas Videos: {len(vids)}"
         )
@@ -1138,6 +1177,9 @@ def main() -> None:
     application.add_handler(
         ChatMemberHandler(_bienvenida_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER)
     )
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, ocultar_salida)
+    )
     application.add_handler(MessageReactionHandler(reaccion))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje)
@@ -1149,19 +1191,6 @@ def main() -> None:
         first=5,
         name='poll_payments',
     )
-    for hour, key in ((9, 'auto_08'), (14, 'auto_16'), (20, 'auto_20')):
-        job_queue.run_daily(
-            mensaje_automatico,
-            time=time(hour, 0, tzinfo=TZ),
-            data=key,
-            name=key,
-        )
-    for hour in (11, 17, 22):
-        job_queue.run_daily(
-            mensaje_listado,
-            time=time(hour, 15, tzinfo=TZ),
-            name=f'listado_{hour}',
-        )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
     for hour in (10, 15, 20):
@@ -1172,6 +1201,11 @@ def main() -> None:
             time=time(hour, 5, tzinfo=TZ),
             name=f'muestra_{hour}',
         )
+    job_queue.run_daily(
+        limpiar_muestras_grupo,
+        time=time(0, 0, tzinfo=TZ),
+        name='limpieza_muestras_grupo',
+    )
     async def refrescar_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(_GOOGLE_EXECUTOR, _cargar_stats_listado_sync)

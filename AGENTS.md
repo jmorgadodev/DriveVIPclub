@@ -23,7 +23,7 @@
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
-8. mensaje_automatico publica a las 09:00, 14:00 y 20:00 Chile (~50% con IMAGEN_RECORDATORIO, borrar 3h)
+8. El grupo recibe una muestra desde Drive cada hora a los :05; se eliminan todas a medianoche
 9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min)
 10. verificar_proximos_vencer a las 10:00 AM avisa usuarios que expiran mañana
 11. Stats dinámicos se cargan desde el listado sheet al inicio y se refrescan 6:00/18:00
@@ -54,9 +54,9 @@
 - /start, /precios, /contenido, /contacto, /semanal, /mensual
 
 ## Images
-- `bienvenida.png` → enviada en /start y nuevo_miembro (se borra en 2h)
+- `bienvenida.png` → enviada en /start y nuevo_miembro (se borra en 15min)
 - `ventajas.png` → enviada en /ventajas
-- `recordatorio.png` → enviada aleatoriamente en auto_08/12/16/20 (~50%, máx 1 cada 4h, se borra en 4h)
+- `recordatorio.png` → disponible para promociones manuales
 - `precios.png`, `transparencia.png` → para fijar manualmente en el grupo
 - `demo_drive.png` → enviada al conceder acceso al Drive
 
@@ -67,12 +67,15 @@
 - Auto-posts programados: 10:00, 15:00 y 20:00 Chile; borrar 3h
 - CANAL_TEXTS rotan 5 variantes con stats y CTA al bot
 - Primeros posts de bienvenida fijados en el canal
-- publicar_muestra(): 1 media cada hora a los :05 Chile, borrar 3h
-  - Carga imágenes (~1028) y videos ≤10MB (~101) vía API Drive (paginación 200), cachea en bot_data
-  - 70% foto / 30% video aleatorio
-  - Lleva set `used_images` para no repetir; cuando agota, reinicia
+
+## Grupo público
+- publicar_muestra(): 1 media cada hora a los :05 Chile en el grupo público; borrar a las 00:00
+  - Carga imágenes y videos ≤20MB vía API Drive (paginación 200), cachea carpetas en bot_data
+  - 70% foto / 30% video; videos de hasta 20MB
+  - Selección determinista por bloque horario para evitar repeticiones consecutivas
   - Descarga vía get_media() (sin almacenamiento intermedio) y envía como InputFile(BytesIO)
   - Usa send_photo() para imágenes, send_video() para videos
+- Los mensajes de miembros que abandonan el grupo se eliminan automáticamente
 
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
