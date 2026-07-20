@@ -19,7 +19,7 @@ r1f = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range='Hoja 1!
 print('Formulas:', r1f.get('values', []))
 
 # Read a few data rows
-rows = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range='Hoja 1!A:H').execute()
+rows = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range='Hoja 1!A:K').execute()
 print('\nAll data:')
 for i, row in enumerate(rows.get('values', [])[:10]):
     print(f'  Row {i}: {row}')

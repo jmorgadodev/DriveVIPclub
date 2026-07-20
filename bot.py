@@ -78,6 +78,7 @@ LISTADO_URL = (
 WELCOME_DELETE_SECONDS = 15 * 60
 SCHEDULED_DELETE_SECONDS = 3 * 60 * 60
 MAX_SAMPLE_VIDEO_BYTES = 20 * 1024 * 1024
+MAX_SALES_ROWS = 5000
 ADMIN_URL = f"https://t.me/{ADMIN_USERNAME.lstrip('@')}"
 SALES_MENU = InlineKeyboardMarkup([
     [
@@ -205,7 +206,8 @@ def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
     try:
         service = _get_sheets_service()
         rows = _execute_sheets(service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f"'Hoja 1'!A1:A{MAX_SALES_ROWS + 1}",
         ))
         vals = rows.get('values', [])
         for i, row in enumerate(vals):
@@ -238,7 +240,8 @@ def _parse_sheet_date(value):
 def _cargar_estado_pagos_sync():
     service = _get_sheets_service()
     rows = _execute_sheets(service.spreadsheets().values().get(
-        spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:K'
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
     )).get('values', [])
 
     if not rows or len(rows[0]) <= 10 or rows[0][10] != 'payment_ids':
@@ -260,11 +263,13 @@ def _cargar_estado_pagos_sync():
         email = row[2] if len(row) > 2 else ''
         plan = row[3] if len(row) > 3 else ''
         estado = row[6].strip().lower() if len(row) > 6 else ''
+        notes = row[9].strip().lower() if len(row) > 9 else ''
         if (
             user_id.isdigit()
             and plan
             and not email
             and estado not in ('vencido', 'acceso_revocado')
+            and notes != 'acceso_revocado'
         ):
             PENDING_GMAIL[int(user_id)] = True
 
@@ -276,12 +281,23 @@ def _cargar_estado_pagos_sync():
     )
 
 
-def _procesar_pago_sheet_sync(user_id, payment_id, plan, fecha, create_missing=True):
+def _procesar_pago_sheet_sync(
+    user_id,
+    payment_id,
+    plan,
+    fecha,
+    username='',
+    create_missing=True,
+):
     service = _get_sheets_service()
     rows = _execute_sheets(service.spreadsheets().values().get(
-        spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:K'
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
     )).get('values', [])
     payment_id = str(payment_id)
+    today = _parse_sheet_date(fecha)
+    if not today:
+        raise ValueError(f'Fecha de pago inválida: {fecha}')
 
     for row_number, row in enumerate(rows[1:], start=2):
         if not row or row[0] != str(user_id):
@@ -292,9 +308,6 @@ def _procesar_pago_sheet_sync(user_id, payment_id, plan, fecha, create_missing=T
 
         tenia_plan = bool(len(row) > 3 and row[3])
         needs_email = not bool(len(row) > 2 and row[2])
-        today = _parse_sheet_date(fecha)
-        if not today:
-            raise ValueError(f'Fecha de pago inválida: {fecha}')
         current_end = _parse_sheet_date(row[5] if len(row) > 5 else '')
         start_date = max(today, current_end) if current_end else today
         duration_days = 30 if plan == 'mensual' else 7
@@ -314,6 +327,10 @@ def _procesar_pago_sheet_sync(user_id, payment_id, plan, fecha, create_missing=T
                         'range': f"'Hoja 1'!K{row_number}",
                         'values': [[persisted_ids]],
                     },
+                    {
+                        'range': f"'Hoja 1'!I{row_number}",
+                        'values': [['bot']],
+                    },
                 ],
             },
         ))
@@ -325,10 +342,40 @@ def _procesar_pago_sheet_sync(user_id, payment_id, plan, fecha, create_missing=T
         }
 
     if create_missing:
-        _registrar_usuario_sync(user_id, 'sin_username')
-        return _procesar_pago_sheet_sync(
-            user_id, payment_id, plan, fecha, create_missing=False
-        )
+        if len(rows) - 1 >= MAX_SALES_ROWS:
+            raise RuntimeError('Hoja 1 alcanzó el límite de ventas configurado')
+        row_number = max(2, len(rows) + 1)
+        duration_days = 30 if plan == 'mensual' else 7
+        expires_on = today + timedelta(days=duration_days)
+        registered_at = datetime.now(TZ).isoformat(timespec='seconds')
+        _execute_sheets(service.spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            body={
+                'valueInputOption': 'USER_ENTERED',
+                'data': [
+                    {
+                        'range': f"'Hoja 1'!A{row_number}:E{row_number}",
+                        'values': [[
+                            str(user_id),
+                            username or 'sin_username',
+                            '',
+                            plan,
+                            today.isoformat(),
+                        ]],
+                    },
+                    {
+                        'range': f"'Hoja 1'!H{row_number}:K{row_number}",
+                        'values': [[registered_at, 'bot', '', payment_id]],
+                    },
+                ],
+            },
+        ))
+        return {
+            'status': 'processed',
+            'renewal': False,
+            'needs_email': True,
+            'expires_on': expires_on.isoformat(),
+        }
     return {'status': 'missing_user'}
 
 def _cargar_mensajes_sync():
@@ -419,38 +466,6 @@ async def registrar_evento(user, event: str, source: str = '') -> None:
         event,
         source,
     )
-
-def _registrar_usuario_sync(user_id: int, username: str) -> None:
-    try:
-        service = _get_sheets_service()
-        existing = _execute_sheets(service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:A'
-        )).get('values', [])
-        if any(row and row[0] == str(user_id) for row in existing[1:]):
-            return
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        row_num = len(existing) + 1
-        _execute_sheets(service.spreadsheets().values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'Hoja 1!A{row_num}:E{row_num}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[str(user_id), username, '', '', '']]},
-        ))
-        _execute_sheets(service.spreadsheets().values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'Hoja 1!H{row_num}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[now]]},
-        ))
-        logging.info(f"Usuario registrado en Sheets: {username} ({user_id})")
-    except FileNotFoundError:
-        logging.warning("Archivo de credenciales no encontrado — registro en Sheets omitido.")
-    except Exception as e:
-        logging.error(f"Error registrando usuario en Sheets: {e}")
-
-async def registrar_usuario(user_id: int, username: str) -> None:
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(_GOOGLE_EXECUTOR, partial(_registrar_usuario_sync, user_id, username))
 
 async def eliminar_mensaje(msg, segundos: int) -> None:
     await asyncio.sleep(segundos)
@@ -592,7 +607,7 @@ async def ocultar_salida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logging.warning(f"No se pudo ocultar la salida de {message.left_chat_member.id}: {e}")
 
-def _crear_preferencia_sync(user_id: int, precio: int, plan: str):
+def _crear_preferencia_sync(user_id: int, precio: int, plan: str, username: str):
     import requests as req
     pref = req.post('https://api.mercadopago.com/checkout/preferences', json={
         'items': [{
@@ -602,6 +617,7 @@ def _crear_preferencia_sync(user_id: int, precio: int, plan: str):
             'unit_price': precio,
         }],
         'external_reference': str(user_id),
+        'metadata': {'telegram_username': username},
         'notification_url': 'https://drivevipclub.onrender.com/',
         'back_urls': {'success': 'https://t.me/DriveVIPclubBot', 'failure': 'https://t.me/DriveVIPclubBot'},
         'auto_return': 'approved',
@@ -613,11 +629,11 @@ def _crear_preferencia_sync(user_id: int, precio: int, plan: str):
     return pref.json()
 
 
-async def _crear_preferencia(user_id: int, precio: int, plan: str):
+async def _crear_preferencia(user_id: int, precio: int, plan: str, username: str):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         _PAYMENT_EXECUTOR,
-        partial(_crear_preferencia_sync, user_id, precio, plan),
+        partial(_crear_preferencia_sync, user_id, precio, plan, username),
     )
 
 async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -630,8 +646,12 @@ async def semanal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     try:
         await registrar_evento(user, 'plan_selected', 'semanal')
-        await registrar_usuario(user.id, user.username or 'sin_username')
-        data = await _crear_preferencia(user.id, 4990, 'Semanal')
+        data = await _crear_preferencia(
+            user.id,
+            4990,
+            'Semanal',
+            user.username or 'sin_username',
+        )
         if 'init_point' in data:
             await registrar_evento(user, 'payment_link_created', 'semanal')
             await update.message.reply_text(f"💎 Plan Semanal $4.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
@@ -652,8 +672,12 @@ async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     try:
         await registrar_evento(user, 'plan_selected', 'mensual')
-        await registrar_usuario(user.id, user.username or 'sin_username')
-        data = await _crear_preferencia(user.id, 8990, 'Mensual')
+        data = await _crear_preferencia(
+            user.id,
+            8990,
+            'Mensual',
+            user.username or 'sin_username',
+        )
         if 'init_point' in data:
             await registrar_evento(user, 'payment_link_created', 'mensual')
             await update.message.reply_text(f"💎 Plan Mensual $8.990\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
@@ -1052,6 +1076,9 @@ async def _poll_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
             continue
         user_id = int(user_id_str)
         plan = 'mensual' if float(payment.get('transaction_amount', 0)) >= 8000 else 'semanal'
+        username = str(
+            (payment.get('metadata') or {}).get('telegram_username') or ''
+        )
         hoy = datetime.now(TZ).date().isoformat()
 
         try:
@@ -1062,6 +1089,7 @@ async def _poll_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
                 payment_id,
                 plan,
                 hoy,
+                username,
             )
         except Exception as e:
             logging.error(f"Error guardando pago {payment_id}: {e}")
@@ -1161,7 +1189,8 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
         rows = await loop.run_in_executor(
             _GOOGLE_EXECUTOR,
             lambda: _execute_sheets(service.spreadsheets().values().get(
-                spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
             ))
         )
         rows = rows.get('values', [])
@@ -1171,10 +1200,22 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
             user_id = row[0]
             estado = row[6] if len(row) > 6 else ''
             email = row[2] if len(row) > 2 else ''
-            if estado == 'vencido' and email and '@' in email:
+            notes = row[9] if len(row) > 9 else ''
+            if (
+                estado == 'vencido'
+                and notes != 'acceso_revocado'
+                and email
+                and '@' in email
+            ):
                 ok = await loop.run_in_executor(_GOOGLE_EXECUTOR, _revocar_drive_sync, email)
                 if ok:
-                    await loop.run_in_executor(_GOOGLE_EXECUTOR, _actualizar_sheet_sync, user_id, 'G', 'acceso_revocado')
+                    await loop.run_in_executor(
+                        _GOOGLE_EXECUTOR,
+                        _actualizar_sheet_sync,
+                        user_id,
+                        'J',
+                        'acceso_revocado',
+                    )
                     try:
                         await context.bot.send_message(chat_id=int(user_id), text="⚠️ Tu membresía ha vencido. El acceso al Drive fue revocado.")
                     except:
@@ -1202,7 +1243,8 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
         rows = await loop.run_in_executor(
             _GOOGLE_EXECUTOR,
             lambda: _execute_sheets(service.spreadsheets().values().get(
-                spreadsheetId=GOOGLE_SHEET_ID, range='Hoja 1!A:I'
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
             ))
         )
         rows = rows.get('values', [])

@@ -11,15 +11,17 @@
 - MCPs: telegram, google-sheets, render, mercadopago (remote via opencode.jsonc)
 
 ## Sheet structure
-- Hoja 1 columns: A(user_id), B(username), C(email), D(plan), E(fecha_inicio), F(fecha_fin=formula), G(estado=formula), H(fecha_registro)
+- Hoja 1 es exclusiva para ventas: A(user_id), B(username), C(email), D(plan), E(fecha_inicio), F(fecha_fin=formula), G(estado=formula), H(fecha_registro), I(origen), J(notas), K(payment_ids)
 - Formulas: F=IF D=semanal→E+7, mensual→E+30; G=IF F<TODAY→"vencido" else "activo"
+- Origen: `bot` para pagos aprobados automáticamente y `manual` para ventas cargadas por el administrador
+- El bot limita las lecturas de Hoja 1 a 5.000 ventas
 - Mensajes tab: key → text with {admin} and {user} placeholders
 
 ## Bot flow
-1. /start → register user in Sheet → welcome + IMAGEN_BIENVENIDA
+1. /start → registra evento en Embudo → welcome + IMAGEN_BIENVENIDA
 2. /semanal ($4.990) or /mensual ($8.990) → create MP preference → send payment link
 3. Polling thread cada 30s consulta MP API `v1/payments/search?status=approved`
-4. Payment detected → sets plan+fecha_inicio in Sheet, marks PENDING_GMAIL[user_id]
+4. Payment detected → crea/actualiza la venta en Hoja 1, marks PENDING_GMAIL[user_id]
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down

@@ -49,6 +49,41 @@ class _Application:
         coroutine.close()
 
 
+class _Request:
+    def __init__(self, result):
+        self.result = result
+
+    def execute(self):
+        return self.result
+
+
+class _SalesValues:
+    def __init__(self):
+        self.batch_body = None
+
+    def get(self, **kwargs):
+        return _Request({"values": [[
+            "user_id", "username", "email", "plan", "fecha_inicio",
+            "fecha_fin", "estado", "fecha_registro", "origen", "notas",
+            "payment_ids",
+        ]]})
+
+    def batchUpdate(self, **kwargs):
+        self.batch_body = kwargs["body"]
+        return _Request({})
+
+
+class _SalesService:
+    def __init__(self):
+        self.values_api = _SalesValues()
+
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self.values_api
+
+
 class GoogleRequestTests(unittest.TestCase):
     def test_sheet_requests_force_cycle_collection(self):
         request = SimpleNamespace(execute=lambda: {"ok": True})
@@ -65,6 +100,31 @@ class GoogleRequestTests(unittest.TestCase):
 
         self.assertEqual(result, b"media")
         collect.assert_called_once_with()
+
+
+class SalesSheetTests(unittest.TestCase):
+    def test_approved_payment_creates_a_complete_bot_sale(self):
+        service = _SalesService()
+        with patch.object(bot, "_get_sheets_service", return_value=service):
+            result = bot._procesar_pago_sheet_sync(
+                123,
+                "payment-1",
+                "semanal",
+                "2026-07-20",
+                username="buyer",
+            )
+
+        self.assertEqual(result["status"], "processed")
+        self.assertFalse(result["renewal"])
+        self.assertTrue(result["needs_email"])
+        data = service.values_api.batch_body["data"]
+        self.assertEqual(data[0]["range"], "'Hoja 1'!A2:E2")
+        self.assertEqual(
+            data[0]["values"][0],
+            ["123", "buyer", "", "semanal", "2026-07-20"],
+        )
+        self.assertEqual(data[1]["range"], "'Hoja 1'!H2:K2")
+        self.assertEqual(data[1]["values"][0][1:], ["bot", "", "payment-1"])
 
 
 class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):
