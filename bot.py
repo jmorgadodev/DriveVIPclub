@@ -51,6 +51,9 @@ from config import (
     MP_ACCESS_TOKEN,
     DRIVE_FOLDER_ID,
     LISTADO_SHEET_ID,
+    PAYPAL_CLIENT_ID,
+    PAYPAL_CLIENT_SECRET,
+    PAYPAL_LINK,
 )
 from mensajes import FALLBACK
 
@@ -93,6 +96,13 @@ SALES_MENU = InlineKeyboardMarkup([
             "Revisar listado",
             url="https://t.me/DriveVIPclubBot?start=lista",
         ),
+    ],
+    [
+        InlineKeyboardButton("🇨🇱 MP /semanal", callback_data="cmd_semanal"),
+        InlineKeyboardButton("🇨🇱 MP /mensual", callback_data="cmd_mensual"),
+    ],
+    [
+        InlineKeyboardButton("🌍 PayPal $10 USD", url=PAYPAL_LINK),
     ],
     [InlineKeyboardButton("Hablar con el admin", url=ADMIN_URL)],
 ])
@@ -785,6 +795,11 @@ def _crear_preferencia_sync(user_id: int, precio: int, plan: str, username: str)
         'notification_url': 'https://drivevipclub.onrender.com/',
         'back_urls': {'success': 'https://t.me/DriveVIPclubBot', 'failure': 'https://t.me/DriveVIPclubBot'},
         'auto_return': 'approved',
+        'payment_methods': {
+            'excluded_payment_methods': [],
+            'excluded_payment_types': [],
+            'installments': 1,
+        },
     }, headers={
         'Authorization': f'Bearer {MP_ACCESS_TOKEN}',
         'Content-Type': 'application/json',
@@ -852,6 +867,168 @@ async def mensual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Error de conexión. Intenta más tarde.")
         logging.error(f"Error en /mensual: {e}")
 
+PAYPAL_ORDER_IDS = {}
+
+def _cargar_ordenes_paypal_sync():
+    global PAYPAL_ORDER_IDS
+    PAYPAL_ORDER_IDS.clear()
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='PayPalOrders!A:D',
+        )).get('values', [])
+        for row in rows[1:]:
+            if len(row) < 4:
+                continue
+            order_id, user_id_str, status, _ = row
+            if status != 'processed' and user_id_str.isdigit():
+                PAYPAL_ORDER_IDS[order_id] = int(user_id_str)
+        logging.info(f"Órdenes PayPal pendientes: {len(PAYPAL_ORDER_IDS)}")
+    except Exception as e:
+        logging.warning(f"No se pudo cargar PayPalOrders: {e}")
+
+
+def _crear_orden_paypal_sync(user_id, username):
+    import base64
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        return None, "PayPal no configurado"
+    try:
+        auth = base64.b64encode(f'{PAYPAL_CLIENT_ID}:{PAYPAL_CLIENT_SECRET}'.encode()).decode()
+        token_req = urllib.request.Request(
+            'https://api-m.paypal.com/v1/oauth2/token',
+            data=b'grant_type=client_credentials',
+            headers={
+                'Authorization': f'Basic {auth}',
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+        )
+        with urllib.request.urlopen(token_req, timeout=10) as resp:
+            token = json.loads(resp.read()).get('access_token')
+        if not token:
+            return None, "Error obteniendo token PayPal"
+        custom_id = f"dvc_{user_id}"
+        order_body = json.dumps({
+            'intent': 'CAPTURE',
+            'purchase_units': [{
+                'amount': {'currency_code': 'USD', 'value': '10.00'},
+                'description': 'DriveVIPclub Mensual',
+                'custom_id': custom_id,
+                'invoice_id': f'DVC-{user_id}-{int(datetime.now().timestamp())}',
+            }],
+            'payment_source': {
+                'paypal': {
+                    'experience_context': {
+                        'payment_method_preference': 'IMMEDIATE_PAYMENT_REQUIRED',
+                        'landing_page': 'LOGIN',
+                        'user_action': 'PAY_NOW',
+                        'return_url': 'https://t.me/DriveVIPclubBot',
+                        'cancel_url': 'https://t.me/DriveVIPclubBot',
+                    }
+                }
+            },
+        }).encode()
+        order_req = urllib.request.Request(
+            'https://api-m.paypal.com/v2/checkout/orders',
+            data=order_body,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            },
+        )
+        with urllib.request.urlopen(order_req, timeout=15) as resp:
+            order = json.loads(resp.read())
+        order_id = order.get('id')
+        approve_link = None
+        for link in order.get('links', []):
+            if link.get('rel') == 'payer-action':
+                approve_link = link['href']
+                break
+        if not order_id or not approve_link:
+            return None, "Error: no se obtuvo link de pago PayPal"
+        return {'order_id': order_id, 'approve_url': approve_link, 'custom_id': custom_id}, None
+    except Exception as e:
+        return None, f"Error creando orden PayPal: {e}"
+
+
+def _guardar_orden_paypal_sync(order_id, user_id, custom_id):
+    try:
+        service = _get_sheets_service()
+        now = datetime.now(TZ).isoformat(timespec='seconds')
+        _execute_sheets(service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='PayPalOrders!A:D',
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body={'values': [[order_id, str(user_id), 'pending', now]]},
+        ))
+    except Exception as e:
+        logging.warning(f"Error guardando orden PayPal {order_id}: {e}")
+
+
+def _actualizar_orden_paypal_sync(order_id, status):
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='PayPalOrders!A:D',
+        )).get('values', [])
+        for i, row in enumerate(rows[1:], start=2):
+            if len(row) >= 1 and row[0] == order_id:
+                _execute_sheets(service.spreadsheets().values().update(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f'PayPalOrders!C{i}',
+                    valueInputOption='RAW',
+                    body={'values': [[status]]},
+                ))
+                return True
+    except Exception as e:
+        logging.warning(f"Error actualizando orden PayPal {order_id}: {e}")
+    return False
+
+
+async def paypal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("⚠️ Para pagar con PayPal, escríbeme en privado: @DriveVIPclubBot")
+        return
+    user = update.effective_user
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        await update.message.reply_text("❌ Sistema PayPal no disponible. Contacta al admin.")
+        return
+    await registrar_evento(user, 'plan_selected', 'paypal')
+    try:
+        loop = asyncio.get_running_loop()
+        result, error = await loop.run_in_executor(
+            _PAYMENT_EXECUTOR,
+            partial(_crear_orden_paypal_sync, user.id, user.username or 'sin_username'),
+        )
+        if error or not result:
+            await update.message.reply_text(f"❌ {error}")
+            return
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR,
+            _guardar_orden_paypal_sync,
+            result['order_id'], user.id, result['custom_id'],
+        )
+        PAYPAL_ORDER_IDS[result['order_id']] = user.id
+        text = (
+            "🌍 PAGO POR PAYPAL — $10 USD\n\n"
+            "✅ Membresía mensual (30 días)\n\n"
+            f"🔗 Link de pago personal:\n{result['approve_url']}\n\n"
+            "📌 Pasos:\n"
+            "1. Abre el link y paga $10 USD\n"
+            "2. Vuelve a este chat y envíame tu Gmail\n"
+            "3. El bot te dará acceso automáticamente ✅"
+        )
+        await update.message.reply_text(text, disable_web_page_preview=True)
+        await registrar_evento(user, 'payment_link_created', 'paypal')
+    except Exception as e:
+        await update.message.reply_text("❌ Error de conexión. Intenta más tarde.")
+        logging.error(f"Error en /paypal: {e}")
+
+
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or not update.message or not update.message.text:
@@ -890,6 +1067,15 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             await update.message.reply_text(caption)
         await registrar_evento(user, 'access_granted', 'gmail_received')
+        return
+
+    text_lower = text.lower()
+    if 'paypal' in text_lower:
+        await update.message.reply_text(
+            "🌍 Para pagar con PayPal usa /paypal\n\n"
+            "Recibirás un link personal para pagar $10 USD por 30 días. "
+            "El bot detectará el pago automáticamente."
+        )
         return
 
     await registrar_evento(user, 'private_message', 'free_text')
@@ -1328,6 +1514,284 @@ async def _poll_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logging.error(f"Pago {payment_id} guardado, pero no se pudo avisar: {e}")
 
+def _obtener_token_paypal_sync():
+    import base64
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        return None
+    try:
+        auth = base64.b64encode(f'{PAYPAL_CLIENT_ID}:{PAYPAL_CLIENT_SECRET}'.encode()).decode()
+        req = urllib.request.Request(
+            'https://api-m.paypal.com/v1/oauth2/token',
+            data=b'grant_type=client_credentials',
+            headers={
+                'Authorization': f'Basic {auth}',
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get('access_token')
+    except Exception as e:
+        logging.warning(f"Error obteniendo token PayPal: {e}")
+        return None
+
+
+def _buscar_pagos_paypal_sync(token):
+    if not token:
+        return []
+    now = datetime.utcnow()
+    start = (now - timedelta(hours=2)).strftime('%Y-%m-%dT00:00:00-0700')
+    end = now.strftime('%Y-%m-%dT23:59:59-0700')
+    params = urllib.parse.urlencode({
+        'start_date': start,
+        'end_date': end,
+        'fields': 'all',
+        'page_size': 50,
+        'transaction_status': 'S',
+    })
+    try:
+        req = urllib.request.Request(
+            f'https://api-m.paypal.com/v1/reporting/transactions?{params}',
+            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+            return data.get('transaction_details', [])
+    except Exception as e:
+        logging.warning(f"Error buscando pagos PayPal: {e}")
+        return []
+
+
+PAYPAL_PROCESSED = set()
+
+
+def _procesar_pago_paypal_sheet_sync(user_id, transaction_id, amount, fecha):
+    service = _get_sheets_service()
+    rows = _execute_sheets(service.spreadsheets().values().get(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+    )).get('values', [])
+    tid = str(transaction_id)
+    today = _parse_sheet_date(fecha)
+    if not today:
+        raise ValueError(f'Fecha de pago inválida: {fecha}')
+
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not row or row[0] != str(user_id):
+            continue
+        payment_ids = _parse_payment_ids(row[10] if len(row) > 10 else '')
+        if tid in payment_ids:
+            return {'status': 'duplicate'}
+        tenia_plan = bool(len(row) > 3 and row[3])
+        needs_email = not bool(len(row) > 2 and row[2])
+        current_end = _parse_sheet_date(row[5] if len(row) > 5 else '')
+        start_date = max(today, current_end) if current_end else today
+        expires_on = start_date + timedelta(days=30)
+        payment_ids.add(tid)
+        persisted_ids = '|'.join(sorted(payment_ids)[-100:])
+        _execute_sheets(service.spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            body={
+                'valueInputOption': 'USER_ENTERED',
+                'data': [
+                    {
+                        'range': f"'Hoja 1'!D{row_number}:E{row_number}",
+                        'values': [['mensual', start_date.isoformat()]],
+                    },
+                    {
+                        'range': f"'Hoja 1'!I{row_number}:K{row_number}",
+                        'values': [['paypal', '', persisted_ids]],
+                    },
+                ],
+            },
+        ))
+        return {
+            'status': 'processed',
+            'renewal': tenia_plan,
+            'needs_email': needs_email,
+            'expires_on': expires_on.isoformat(),
+        }
+
+    if len(rows) - 1 >= MAX_SALES_ROWS:
+        raise RuntimeError('Hoja 1 alcanzó el límite de ventas configurado')
+    row_number = max(2, len(rows) + 1)
+    expires_on = today + timedelta(days=30)
+    registered_at = datetime.now(TZ).isoformat(timespec='seconds')
+    _execute_sheets(service.spreadsheets().values().batchUpdate(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        body={
+            'valueInputOption': 'USER_ENTERED',
+            'data': [
+                {
+                    'range': f"'Hoja 1'!A{row_number}:E{row_number}",
+                    'values': [[
+                        str(user_id), 'sin_username', '', 'mensual', today.isoformat(),
+                    ]],
+                },
+                {
+                    'range': f"'Hoja 1'!H{row_number}:K{row_number}",
+                    'values': [[registered_at, 'paypal', '', tid]],
+                },
+            ],
+        },
+    ))
+    return {
+        'status': 'processed',
+        'renewal': False,
+        'needs_email': True,
+        'expires_on': expires_on.isoformat(),
+    }
+
+
+def _cargar_estado_pagos_paypal_sync():
+    global PAYPAL_PROCESSED
+    PAYPAL_PROCESSED.clear()
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+        )).get('values', [])
+        for row in rows[1:]:
+            if not row or len(row) <= 10:
+                continue
+            origen = row[8] if len(row) > 8 else ''
+            if origen == 'paypal':
+                PAYPAL_PROCESSED.update(_parse_payment_ids(row[10]))
+    except Exception as e:
+        logging.warning(f"Error cargando estado PayPal: {e}")
+
+
+def _verificar_orden_paypal_sync(token, order_id):
+    try:
+        req = urllib.request.Request(
+            f'https://api-m.paypal.com/v2/checkout/orders/{order_id}',
+            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        logging.warning(f"Error verificando orden PayPal {order_id}: {e}")
+        return None
+
+
+def _capturar_orden_paypal_sync(token, order_id):
+    try:
+        req = urllib.request.Request(
+            f'https://api-m.paypal.com/v2/checkout/orders/{order_id}/capture',
+            data=b'',
+            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        logging.warning(f"Error capturando orden PayPal {order_id}: {e}")
+        return None
+
+
+async def _poll_paypal_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        return
+    if not PAYPAL_ORDER_IDS:
+        return
+    loop = asyncio.get_running_loop()
+    token = await loop.run_in_executor(_PAYMENT_EXECUTOR, _obtener_token_paypal_sync)
+    if not token:
+        return
+
+    for order_id, user_id in list(PAYPAL_ORDER_IDS.items()):
+        order = await loop.run_in_executor(
+            _PAYMENT_EXECUTOR, _verificar_orden_paypal_sync, token, order_id
+        )
+        if not order:
+            continue
+        status = order.get('status')
+        intent = order.get('intent', '')
+        purchase_units = order.get('purchase_units', [{}])
+        capture_id = None
+        for pu in purchase_units:
+            payments = pu.get('payments', {})
+            for capture in payments.get('captures', []):
+                if capture.get('status') == 'COMPLETED':
+                    capture_id = capture.get('id')
+                    break
+            for capture in payments.get('authorizations', []):
+                if capture.get('status') == 'COMPLETED' and intent == 'CAPTURE':
+                    cap_result = await loop.run_in_executor(
+                        _PAYMENT_EXECUTOR, _capturar_orden_paypal_sync, token, order_id
+                    )
+                    if cap_result:
+                        for pu2 in cap_result.get('purchase_units', [{}]):
+                            for cap2 in pu2.get('payments', {}).get('captures', []):
+                                if cap2.get('status') == 'COMPLETED':
+                                    capture_id = cap2.get('id')
+                                    break
+
+        if not capture_id or capture_id in PAYPAL_PROCESSED:
+            if status in ('VOIDED', 'EXPIRED'):
+                del PAYPAL_ORDER_IDS[order_id]
+                await loop.run_in_executor(
+                    _GOOGLE_EXECUTOR, _actualizar_orden_paypal_sync, order_id, 'expired'
+                )
+            continue
+
+        hoy = datetime.now(TZ).date().isoformat()
+        logging.info(f"PayPal orden COMPLETADA: {order_id} → usuario {user_id}, capture {capture_id}")
+
+        try:
+            result = await loop.run_in_executor(
+                _GOOGLE_EXECUTOR,
+                _procesar_pago_paypal_sheet_sync,
+                user_id, capture_id, 10.0, hoy,
+            )
+        except Exception as e:
+            logging.error(f"Error guardando pago PayPal {capture_id}: {e}")
+            continue
+
+        if result['status'] == 'duplicate':
+            PAYPAL_PROCESSED.add(capture_id)
+            del PAYPAL_ORDER_IDS[order_id]
+            await loop.run_in_executor(
+                _GOOGLE_EXECUTOR, _actualizar_orden_paypal_sync, order_id, 'processed'
+            )
+            continue
+
+        PAYPAL_PROCESSED.add(capture_id)
+        _trim_set(PAYPAL_PROCESSED, 2000)
+        del PAYPAL_ORDER_IDS[order_id]
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR, _actualizar_orden_paypal_sync, order_id, 'processed'
+        )
+
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR,
+            _registrar_evento_sync, user_id, '', 'payment_approved', 'paypal',
+        )
+
+        needs_email = result['needs_email']
+        expires_on = result['expires_on']
+        try:
+            if not needs_email:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"✅ ¡Pago PayPal recibido! Tu membresía se ha extendido "
+                        f"hasta {expires_on}. ¡Disfruta!"
+                    ),
+                )
+            else:
+                PENDING_GMAIL[user_id] = True
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "✅ ¡Pago PayPal confirmado! Ahora envíame tu correo Gmail "
+                        "para darte acceso al Drive."
+                    ),
+                )
+        except Exception as e:
+            logging.error(f"Pago PayPal {capture_id} guardado, pero no se pudo avisar: {e}")
+
+
 def _trim_set(s, max_size=1000):
     while len(s) > max_size:
         s.pop()
@@ -1514,6 +1978,8 @@ def main() -> None:
     _run_google_sync(_cargar_mensajes_sync)
     _run_google_sync(_cargar_stats_cache_sync)
     _run_google_sync(_cargar_estado_pagos_sync)
+    _run_google_sync(_cargar_estado_pagos_paypal_sync)
+    _run_google_sync(_cargar_ordenes_paypal_sync)
     _run_google_sync(_cargar_eliminaciones_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
@@ -1529,6 +1995,7 @@ def main() -> None:
     application.add_handler(CommandHandler("contacto", contacto))
     application.add_handler(CommandHandler("semanal",  semanal))
     application.add_handler(CommandHandler("mensual",  mensual))
+    application.add_handler(CommandHandler("paypal",   paypal))
     application.add_handler(CommandHandler("lista",    lista))
     application.add_handler(CommandHandler("ventajas", ventajas))
     application.add_handler(CommandHandler("testdrive", test_drive))
@@ -1548,6 +2015,12 @@ def main() -> None:
         interval=30,
         first=5,
         name='poll_payments',
+    )
+    job_queue.run_repeating(
+        _poll_paypal_payments,
+        interval=120,
+        first=15,
+        name='poll_paypal',
     )
     job_queue.run_repeating(
         limpiar_eliminaciones_pendientes,
