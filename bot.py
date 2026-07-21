@@ -999,8 +999,9 @@ async def ocultar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     try:
         await message.delete()
-    except Exception:
-        pass
+        logging.info(f"Entrada oculta de {[u.id for u in message.new_chat_members]}")
+    except Exception as e:
+        logging.warning(f"No se pudo ocultar entrada: {e}")
 
 def _crear_preferencia_sync(user_id: int, precio: int, plan: str, username: str):
     import requests as req
