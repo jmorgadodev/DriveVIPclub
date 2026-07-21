@@ -54,6 +54,7 @@ from config import (
     PAYPAL_CLIENT_ID,
     PAYPAL_CLIENT_SECRET,
     PAYPAL_LINK,
+    DEMO_FOLDER_ID,
 )
 from mensajes import FALLBACK
 
@@ -63,6 +64,8 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 MENSAJES = {}
 STATS = {}
 PENDING_GMAIL = {}
+PENDING_DEMO_GMAIL = {}
+DEMO_EXPIRY = {}
 PROCESSED_PAYMENTS = set()
 PENDING_DELETIONS = {}
 
@@ -216,6 +219,52 @@ def _revocar_drive_sync(email: str) -> bool:
     except Exception as e:
         logging.error(f"Error revocando Drive a {email}: {e}")
         return False
+
+def _compartir_drive_demo_sync(email: str) -> bool:
+    if not DEMO_FOLDER_ID:
+        logging.error("DEMO_FOLDER_ID no configurado")
+        return False
+    try:
+        drive = _get_drive_service()
+        perms = _execute_drive(drive.permissions().list(
+            fileId=DEMO_FOLDER_ID,
+            fields='permissions(id,emailAddress)',
+        )).get('permissions', [])
+        if any(p.get('emailAddress') == email for p in perms):
+            return True
+        _execute_drive(drive.permissions().create(
+            fileId=DEMO_FOLDER_ID,
+            body={'type': 'user', 'role': 'reader', 'emailAddress': email},
+            sendNotificationEmail=True,
+            emailMessage='Has recibido acceso de prueba a DriveVIPclub. Revisa las carpetas y disfruta la muestra.',
+        ))
+        logging.info(f"Demo Drive compartido con {email}")
+        return True
+    except Exception as e:
+        logging.error(f"Error compartiendo Demo Drive con {email}: {e}")
+        return False
+
+
+def _revocar_drive_demo_sync(email: str) -> bool:
+    if not DEMO_FOLDER_ID:
+        return False
+    try:
+        drive = _get_drive_service()
+        perms = _execute_drive(drive.permissions().list(
+            fileId=DEMO_FOLDER_ID, fields='permissions(id,emailAddress)'
+        ))
+        for p in perms.get('permissions', []):
+            if p.get('emailAddress') == email:
+                _execute_drive(drive.permissions().delete(
+                    fileId=DEMO_FOLDER_ID, permissionId=p['id']
+                ))
+                logging.info(f"Demo Drive revocado a {email}")
+                return True
+        return False
+    except Exception as e:
+        logging.error(f"Error revocando Demo Drive a {email}: {e}")
+        return False
+
 
 def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
     try:
@@ -1031,6 +1080,47 @@ async def paypal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error en /paypal: {e}")
 
 
+async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _solo_privado(update):
+        await update.message.reply_text("ℹ️ Escríbeme en privado para solicitar una demo: @DriveVIPclubBot")
+        return
+    user = update.effective_user
+    if not user:
+        return
+    if not DEMO_FOLDER_ID:
+        await update.message.reply_text("❌ Demo no disponible. Contacta al admin.")
+        return
+    uid = user.id
+    if uid in PENDING_DEMO_GMAIL:
+        await update.message.reply_text("Ya tienes una demo en proceso. Envíame tu correo Gmail para activarla.")
+        return
+    if uid in DEMO_EXPIRY:
+        remaining = int(DEMO_EXPIRY[uid] - datetime.now().timestamp())
+        if remaining > 0:
+            await update.message.reply_text(
+                f"⏳ Ya tienes una demo activa. Expira en {remaining // 60} min {remaining % 60} seg."
+            )
+            return
+        else:
+            del DEMO_EXPIRY[uid]
+    if uid in PENDING_GMAIL:
+        await update.message.reply_text(
+            "Ya tienes un pago pendiente. Envíame tu Gmail para activar tu membresía."
+        )
+        return
+    if not MP_ACCESS_TOKEN:
+        await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
+        return
+    await registrar_evento(user, 'demo_solicitada', 'demo')
+    PENDING_DEMO_GMAIL[uid] = True
+    await update.message.reply_text(
+        "🎬 DEMO GRATIS — 15 MINUTOS\n\n"
+        "Te daré acceso de prueba a una carpeta con contenido DEMO.\n"
+        "Desde que actives, tienes 15 minutos para recorrer.\n\n"
+        "Envíame tu correo Gmail para empezar:"
+    )
+
+
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or not update.message or not update.message.text:
@@ -1038,6 +1128,42 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _solo_privado(update):
         return
     text = update.message.text.strip()
+    if user.id in PENDING_DEMO_GMAIL:
+        if '@' not in text or '.' not in text:
+            await update.message.reply_text("❌ Eso no parece un Gmail válido. Envíame tu correo electrónico (ej: usuario@gmail.com)")
+            return
+        loop = asyncio.get_event_loop()
+        ok = await loop.run_in_executor(_GOOGLE_EXECUTOR, _compartir_drive_demo_sync, text)
+        if not ok:
+            await update.message.reply_text("❌ Error compartiendo la demo. Contacta al admin.")
+            return
+        del PENDING_DEMO_GMAIL[user.id]
+        DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 15 * 60
+        demo_emails = context.bot_data.setdefault('demo_emails', {})
+        demo_emails[user.id] = text
+        caption = (
+            "🎬 DEMO ACTIVADA — 15 MIN\n\n"
+            f"Acceso concedido a {text}\n\n"
+            "Revisa DRIVE > COMPARTIDOS CONMIGO.\n"
+            f"Link directo: https://drive.google.com/drive/folders/{DEMO_FOLDER_ID}\n\n"
+            "⏳ Tienes 15 minutos. Cuando expire, te enviaré los planes disponibles."
+        )
+        if os.path.exists('demo_drive.png'):
+            with open('demo_drive.png', 'rb') as f:
+                await update.message.reply_photo(photo=InputFile(f), caption=caption)
+        else:
+            await update.message.reply_text(caption)
+        await registrar_evento(user, 'demo_access_granted', text)
+        await context.bot.send_message(
+            chat_id=PUBLIC_GROUP_ID,
+            text=(
+                f"👤 Demo solicitada por @{user.username or user.id}\n"
+                f"ID: {user.id}\n"
+                f"Email: {text}\n"
+                f"{ADMIN_USERNAME}"
+            ),
+        )
+        return
     if user.id in PENDING_GMAIL:
         if '@' not in text or '.' not in text:
             await update.message.reply_text("❌ Eso no parece un Gmail válido. Envíame tu correo electrónico (ej: usuario@gmail.com)")
@@ -1948,6 +2074,44 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logging.error(f"Error en verificar_proximos_vencer: {e}")
 
+async def _procesar_demos_vencidas(context: ContextTypes.DEFAULT_TYPE) -> None:
+    now = datetime.now().timestamp()
+    vencidas = [uid for uid, exp in list(DEMO_EXPIRY.items()) if now >= exp]
+    if not vencidas:
+        return
+    loop = asyncio.get_event_loop()
+    for uid in vencidas:
+        del DEMO_EXPIRY[uid]
+        try:
+            user_data = context.bot_data.get('demo_emails', {}).pop(uid, None)
+            if user_data:
+                await loop.run_in_executor(_GOOGLE_EXECUTOR, _revocar_drive_demo_sync, user_data)
+        except Exception as e:
+            logging.warning(f"Error revocando demo a {uid}: {e}")
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    "⏰ TU DEMO HA TERMINADO\n\n"
+                    "Espero hayas disfrutado la muestra. Para acceder al "
+                    "contenido COMPLETO organizado de la A a la Z:\n\n"
+                    "💎 /semanal ($4.990) — 7 días\n"
+                    "💎 /mensual ($8.990) — 30 días\n\n"
+                    "Pagos nacionales: MercadoPago (débito, crédito, transferencia)\n"
+                    "🌍 Pagos internacionales: PayPal — /paypal\n\n"
+                    "¡En segundos tienes acceso a TODO!"
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🇨🇱 Pago semanal $4.990", callback_data="cmd_semanal")],
+                    [InlineKeyboardButton("🇨🇱 Pago mensual $8.990", callback_data="cmd_mensual")],
+                    [InlineKeyboardButton("🌍 PayPal $10 USD", url=PAYPAL_LINK)],
+                ]),
+            )
+            logging.info(f"Demo vencida notificada a {uid}")
+        except Exception as e:
+            logging.warning(f"No se pudo notificar demo vencida a {uid}: {e}")
+
+
 async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
         return
@@ -2001,6 +2165,7 @@ def main() -> None:
     application.add_handler(CommandHandler("lista",    lista))
     application.add_handler(CommandHandler("ventajas", ventajas))
     application.add_handler(CommandHandler("testdrive", test_drive))
+    application.add_handler(CommandHandler("demo", demo))
     application.add_handler(
         ChatMemberHandler(_bienvenida_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER)
     )
@@ -2032,6 +2197,12 @@ def main() -> None:
     )
     job_queue.run_daily(verificar_vencidos, time=time(4, 0, tzinfo=TZ))
     job_queue.run_daily(verificar_proximos_vencer, time=time(10, 0, tzinfo=TZ))
+    job_queue.run_repeating(
+        _procesar_demos_vencidas,
+        interval=15,
+        first=10,
+        name='procesar_demos',
+    )
     for hour in (10, 15, 20):
         job_queue.run_daily(mensaje_canal, time=time(hour, 0, tzinfo=TZ), name=f'canal_{hour}')
     for hour, minute in ((10, 5), (13, 5), (16, 5), (19, 5), (22, 5), (23, 30)):

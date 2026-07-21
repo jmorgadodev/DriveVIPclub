@@ -5,6 +5,7 @@
 - Service account creds path: C:\Users\jorge\.codex\credentials\gsc-service-account.json
 - MP Access Token: (set via .env + Render dashboard)
 - Drive folder ID: 1EHGYTF0QHiZUFq8FEaa3W3UppGGupaKb (carpeta maestra, dueño vpack2034@gmail.com)
+- DEMO folder ID: 1S9UnBT5hA17RIN8CThm14n7ED86r4dyC (carpeta demo con 1611 creadores, 9219 fotos + 2539 videos de muestra)
 - Render: srv-d9d019urnols73ciq81g, https://drivevipclub.onrender.com
 - Admin: @backadminthree
 - Public group: -1003902977064, VIP group: -1004328779223, Channel: -1004398583245
@@ -54,6 +55,7 @@
 - /lista → link a la planilla pública de contenido (`1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k`)
 - /ventajas → texto ventajas + IMAGEN_VENTAJAS (ventajas.png)
 - /start, /precios, /contenido, /contacto, /semanal, /mensual
+- /demo → demo 15 min: pide Gmail, comparte DEMO_FOLDER_ID, revoca a los 15 min y envía links de pago
 
 ## Images
 - `bienvenida.png` → enviada en /start y nuevo_miembro (se borra en 15min)
@@ -80,6 +82,13 @@
   - Las muestras del grupo se borran a las 00:00; las del canal después de 3h
 - Los mensajes de miembros que abandonan el grupo se eliminan automáticamente
 - La pestaña `Embudo` registra ingresos, salidas, aperturas, planes, links de pago y pagos aprobados
+
+## Demo flow
+1. /demo → pregunta Gmail, registra evento `demo_solicitada`
+2. User envía email → comparte DEMO_FOLDER_ID (carpeta con contenido limitado), guarda email en bot_data['demo_emails'], inicia timer 15 min en DEMO_EXPIRY
+3. Job `_procesar_demos_vencidas` cada 15s revisa DEMO_EXPIRY
+4. Al expirar: revoca acceso al DEMO_FOLDER_ID, envía mensaje con links MP y PayPal
+5. Notifica al grupo público con @backadminthree
 
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)
