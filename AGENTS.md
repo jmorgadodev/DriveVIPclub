@@ -12,22 +12,23 @@
 - MCPs: telegram, google-sheets, render, mercadopago (remote via opencode.jsonc)
 
 ## Sheet structure
-- Hoja 1 es exclusiva para ventas: A(user_id), B(username), C(email), D(plan), E(fecha_inicio), F(fecha_fin=formula), G(estado=formula), H(fecha_registro), I(origen), J(notas), K(payment_ids)
+- Ventas (ex Hoja 1): A(user_id), B(username), C(email), D(plan), E(fecha_inicio), F(fecha_fin=formula), G(estado=formula), H(fecha_registro), I(origen), J(notas), K(payment_ids)
 - Formulas: F=IF D=semanal→E+7, mensual→E+30; G=IF F<TODAY→"vencido" else "activo"
 - Origen: `bot` para pagos aprobados automáticamente y `manual` para ventas cargadas por el administrador
-- El bot limita las lecturas de Hoja 1 a 5.000 ventas
+- El bot limita las lecturas de Ventas a 5.000 filas
+- Demos: A(user_id), B(username), C(email), D(requested_at), E(expires_at), F(status)
 - Mensajes tab: key → text with {admin} and {user} placeholders
 
 ## Bot flow
 1. /start → registra evento en Embudo → welcome + IMAGEN_BIENVENIDA
 2. /semanal ($4.990) or /mensual ($8.990) → create MP preference → send payment link
 3. Polling thread cada 30s consulta MP API `v1/payments/search?status=approved`
-4. Payment detected → crea/actualiza la venta en Hoja 1, marks PENDING_GMAIL[user_id]
+4. Payment detected → crea/actualiza la venta en Ventas, marks PENDING_GMAIL[user_id]
 5. User sends email → bot shares Drive folder via API → saves email in Sheet
 6. Bot checks daily at 04:00 AM for expired users → revokes Drive access
 7. Self-ping every 10min to prevent Render spin-down
-8. El grupo recibe 6 muestras diarias: 10:05, 13:05, 16:05, 19:05, 22:05 y 23:30; se eliminan a medianoche
-9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min mediante cola persistente `Eliminaciones`)
+8. El grupo recibe 6 muestras diarias: 10:05, 13:05, 16:05, 19:05, 22:05 y 23:30; se mantienen 3 visibles rotando (se elimina la mas antigua al publicar nueva)
+9. nuevo_miembro welcomes new members in public group (con IMAGEN_BIENVENIDA, borrar 15min mediante cola persistente `Eliminaciones`). El mensaje de "X se unió" se elimina automáticamente.
 10. verificar_proximos_vencer a las 10:00 AM avisa usuarios que expiran mañana
 11. Stats se cargan desde `Estadisticas` al inicio; el listado completo se consulta solo los lunes a las 06:00 Chile y actualiza el mensaje fijado 478
 
@@ -84,11 +85,14 @@
 - La pestaña `Embudo` registra ingresos, salidas, aperturas, planes, links de pago y pagos aprobados
 
 ## Demo flow
-1. /demo → pregunta Gmail, registra evento `demo_solicitada`
-2. User envía email → comparte DEMO_FOLDER_ID (carpeta con contenido limitado), guarda email en bot_data['demo_emails'], inicia timer 15 min en DEMO_EXPIRY
-3. Job `_procesar_demos_vencidas` cada 15s revisa DEMO_EXPIRY
-4. Al expirar: revoca acceso al DEMO_FOLDER_ID, envía mensaje con links MP y PayPal
-5. Notifica al grupo público con @backadminthree
+1. /demo → verifica si ya usó demo (`_demo_ya_usada_sync` en hoja Demos) → si ya usó, ofrece suscripción
+2. Pide Gmail, registra evento `demo_solicitada`
+3. User envía email → comparte DEMO_FOLDER_ID, guarda en hoja Demos con status='activo', inicia timer 10 min en DEMO_EXPIRY
+4. Job `_procesar_demos_vencidas` cada 15s revisa DEMO_EXPIRY
+5. Al expirar: revoca acceso, actualiza status='expirado', envía mensaje con links MP y PayPal
+6. Demo única por usuario (control por hoja Demos)
+7. Notifica al grupo público con @backadminthree
+8. Demo visible desde SALES_MENU y /start demo
 
 ## Tools
 - Test Drive: python test_drive.py (created per-test, removed after)

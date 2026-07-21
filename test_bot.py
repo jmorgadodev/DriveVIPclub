@@ -138,12 +138,12 @@ class SalesSheetTests(unittest.TestCase):
         self.assertFalse(result["renewal"])
         self.assertTrue(result["needs_email"])
         data = service.values_api.batch_body["data"]
-        self.assertEqual(data[0]["range"], "'Hoja 1'!A2:E2")
+        self.assertEqual(data[0]["range"], "'Ventas'!A2:E2")
         self.assertEqual(
             data[0]["values"][0],
             ["123", "buyer", "", "semanal", "2026-07-20"],
         )
-        self.assertEqual(data[1]["range"], "'Hoja 1'!H2:K2")
+        self.assertEqual(data[1]["range"], "'Ventas'!H2:K2")
         self.assertEqual(data[1]["values"][0][1:], ["bot", "", "payment-1"])
 
 

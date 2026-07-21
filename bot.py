@@ -59,6 +59,9 @@ from config import (
 from mensajes import FALLBACK
 
 GROUP_LINK = "https://t.me/+-1gS1EfQMLNmMjdh"
+SHEET_VENTAS = "Ventas"
+SHEET_DEMOS = "Demos"
+SHEET_DASHBOARD = "Dashboard"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 MENSAJES = {}
@@ -107,6 +110,7 @@ SALES_MENU = InlineKeyboardMarkup([
     [
         InlineKeyboardButton("🌍 PayPal $10 USD", url=PAYPAL_LINK),
     ],
+    [InlineKeyboardButton("🎬 Demo gratis 10 min", url="https://t.me/DriveVIPclubBot?start=demo")],
     [InlineKeyboardButton("Hablar con el admin", url=ADMIN_URL)],
 ])
 
@@ -266,17 +270,162 @@ def _revocar_drive_demo_sync(email: str) -> bool:
         return False
 
 
+def _inicializar_planilla_sync():
+    try:
+        service = _get_sheets_service()
+        spreadsheet = _execute_sheets(service.spreadsheets().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            fields='sheets(properties(sheetId,title))',
+        ))
+        sheets = {s['properties']['title']: s['properties']['sheetId'] for s in spreadsheet.get('sheets', [])}
+
+        requests = []
+
+        # Rename Hoja 1 → Ventas if still exists
+        if 'Hoja 1' in sheets and 'Ventas' not in sheets:
+            requests.append({
+                'updateSheetProperties': {
+                    'properties': {'sheetId': sheets['Hoja 1'], 'title': 'Ventas'},
+                    'fields': 'title',
+                }
+            })
+            sheets['Ventas'] = sheets.pop('Hoja 1')
+
+        # Create Demos sheet if missing
+        if 'Demos' not in sheets:
+            r = _execute_sheets(service.spreadsheets().batchUpdate(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                body={'requests': [{
+                    'addSheet': {
+                        'properties': {'title': 'Demos'}
+                    }
+                }]},
+            ))
+            demo_sheet_id = r['replies'][0]['addSheet']['properties']['sheetId']
+            # Header row
+            _execute_sheets(service.spreadsheets().values().update(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range="'Demos'!A1:F1",
+                valueInputOption='RAW',
+                body={'values': [['user_id', 'username', 'email', 'requested_at', 'expires_at', 'status']]},
+            ))
+            requests.append({
+                'repeatCell': {
+                    'range': {'sheetId': demo_sheet_id, 'startRowIndex': 0, 'endRowIndex': 1},
+                    'cell': {
+                        'userEnteredFormat': {
+                            'backgroundColor': {'red': 0.2, 'green': 0.2, 'blue': 0.2},
+                            'textFormat': {'bold': True, 'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}},
+                            'horizontalAlignment': 'CENTER',
+                        }
+                    },
+                    'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                }
+            })
+        else:
+            demo_sheet_id = sheets['Demos']
+
+        # Format Ventas header if not done
+        if 'Ventas' in sheets:
+            requests.append({
+                'repeatCell': {
+                    'range': {'sheetId': sheets['Ventas'], 'startRowIndex': 0, 'endRowIndex': 1},
+                    'cell': {
+                        'userEnteredFormat': {
+                            'backgroundColor': {'red': 0.2, 'green': 0.2, 'blue': 0.2},
+                            'textFormat': {'bold': True, 'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}},
+                            'horizontalAlignment': 'CENTER',
+                        }
+                    },
+                    'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                }
+            })
+            # Border for Ventas
+            requests.append({
+                'updateBorders': {
+                    'range': {'sheetId': sheets['Ventas'], 'startRowIndex': 0, 'endRowIndex': 1},
+                    'top': {'style': 'SOLID', 'width': 2, 'color': {'red': 0, 'green': 0, 'blue': 0}},
+                    'bottom': {'style': 'SOLID', 'width': 2, 'color': {'red': 0, 'green': 0, 'blue': 0}},
+                }
+            })
+
+        if requests:
+            _execute_sheets(service.spreadsheets().batchUpdate(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                body={'requests': requests},
+            ))
+        logging.info("Planilla inicializada: Ventas + Demos + Dashboard")
+    except Exception as e:
+        logging.warning(f"Error inicializando planilla: {e}")
+
+
+def _guardar_demo_sync(user_id: int, username: str, email: str, expires_at: str) -> bool:
+    try:
+        service = _get_sheets_service()
+        _execute_sheets(service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="'Demos'!A:F",
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body={'values': [[
+                str(user_id), username, email,
+                datetime.now(TZ).isoformat(timespec='seconds'),
+                expires_at, 'activo',
+            ]]},
+        ))
+        return True
+    except Exception as e:
+        logging.error(f"Error guardando demo: {e}")
+        return False
+
+
+def _actualizar_demo_status_sync(user_id: int, status: str) -> None:
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="'Demos'!A:F",
+        )).get('values', [])
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == str(user_id):
+                _execute_sheets(service.spreadsheets().values().update(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f"'Demos'!F{i}",
+                    valueInputOption='RAW',
+                    body={'values': [[status]]},
+                ))
+                return
+    except Exception as e:
+        logging.error(f"Error actualizando status demo: {e}")
+
+
+def _demo_ya_usada_sync(user_id: int) -> bool:
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="'Demos'!A:F",
+        )).get('values', [])
+        for row in rows[1:]:
+            if row and row[0] == str(user_id):
+                return True
+        return False
+    except Exception as e:
+        logging.error(f"Error consultando demo: {e}")
+        return False
+
+
 def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
     try:
         service = _get_sheets_service()
         rows = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'Hoja 1'!A1:A{MAX_SALES_ROWS + 1}",
+            range=f"'Ventas'!A1:A{MAX_SALES_ROWS + 1}",
         ))
         vals = rows.get('values', [])
         for i, row in enumerate(vals):
             if row and row[0] == str(user_id):
-                cell_range = f"'Hoja 1'!{col_letter}{i+1}"
+                cell_range = f"'Ventas'!{col_letter}{i+1}"
                 _execute_sheets(service.spreadsheets().values().update(
                     spreadsheetId=GOOGLE_SHEET_ID,
                     range=cell_range,
@@ -305,13 +454,13 @@ def _cargar_estado_pagos_sync():
     service = _get_sheets_service()
     rows = _execute_sheets(service.spreadsheets().values().get(
         spreadsheetId=GOOGLE_SHEET_ID,
-        range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+        range=f"'Ventas'!A1:K{MAX_SALES_ROWS + 1}",
     )).get('values', [])
 
     if not rows or len(rows[0]) <= 10 or rows[0][10] != 'payment_ids':
         _execute_sheets(service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range="'Hoja 1'!K1",
+            range="'Ventas'!K1",
             valueInputOption='RAW',
             body={'values': [['payment_ids']]},
         ))
@@ -356,7 +505,7 @@ def _procesar_pago_sheet_sync(
     service = _get_sheets_service()
     rows = _execute_sheets(service.spreadsheets().values().get(
         spreadsheetId=GOOGLE_SHEET_ID,
-        range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+        range=f"'Ventas'!A1:K{MAX_SALES_ROWS + 1}",
     )).get('values', [])
     payment_id = str(payment_id)
     today = _parse_sheet_date(fecha)
@@ -384,15 +533,15 @@ def _procesar_pago_sheet_sync(
                 'valueInputOption': 'USER_ENTERED',
                 'data': [
                     {
-                        'range': f"'Hoja 1'!D{row_number}:E{row_number}",
+                        'range': f"'Ventas'!D{row_number}:E{row_number}",
                         'values': [[plan, start_date.isoformat()]],
                     },
                     {
-                        'range': f"'Hoja 1'!K{row_number}",
+                        'range': f"'Ventas'!K{row_number}",
                         'values': [[persisted_ids]],
                     },
                     {
-                        'range': f"'Hoja 1'!I{row_number}",
+                        'range': f"'Ventas'!I{row_number}",
                         'values': [['bot']],
                     },
                 ],
@@ -407,7 +556,7 @@ def _procesar_pago_sheet_sync(
 
     if create_missing:
         if len(rows) - 1 >= MAX_SALES_ROWS:
-            raise RuntimeError('Hoja 1 alcanzó el límite de ventas configurado')
+            raise RuntimeError('Ventas alcanzó el límite de configurado')
         row_number = max(2, len(rows) + 1)
         duration_days = 30 if plan == 'mensual' else 7
         expires_on = today + timedelta(days=duration_days)
@@ -418,7 +567,7 @@ def _procesar_pago_sheet_sync(
                 'valueInputOption': 'USER_ENTERED',
                 'data': [
                     {
-                        'range': f"'Hoja 1'!A{row_number}:E{row_number}",
+                        'range': f"'Ventas'!A{row_number}:E{row_number}",
                         'values': [[
                             str(user_id),
                             username or 'sin_username',
@@ -428,7 +577,7 @@ def _procesar_pago_sheet_sync(
                         ]],
                     },
                     {
-                        'range': f"'Hoja 1'!H{row_number}:K{row_number}",
+                        'range': f"'Ventas'!H{row_number}:K{row_number}",
                         'values': [[registered_at, 'bot', '', payment_id]],
                     },
                 ],
@@ -728,6 +877,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 disable_web_page_preview=True,
             )
             return
+        if source == 'demo':
+            await registrar_evento(user, 'demo_from_menu', 'sample_button')
+            await update.message.reply_text(
+                "🎬 ¿Quieres probar el contenido antes de comprar?\n\n"
+                "Usa /demo para obtener 10 minutos de acceso gratuito "
+                "a la carpeta DEMO con contenido limitado de muestra."
+            )
+            return
         msg = await _enviar_mensaje_bienvenida(
             context, update.effective_chat.id, _bienvenida(user)
         )
@@ -829,8 +986,21 @@ async def ocultar_salida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     try:
         await message.delete()
+        logging.info(f"Salida oculta de {message.left_chat_member.id}")
     except Exception as e:
         logging.warning(f"No se pudo ocultar la salida de {message.left_chat_member.id}: {e}")
+
+
+async def ocultar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message or message.chat_id not in (PUBLIC_GROUP_ID, VIP_GROUP_ID):
+        return
+    if not message.new_chat_members:
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 def _crear_preferencia_sync(user_id: int, precio: int, plan: str, username: str):
     import requests as req
@@ -1111,13 +1281,33 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not MP_ACCESS_TOKEN:
         await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
+    loop = asyncio.get_event_loop()
+    ya_uso = await loop.run_in_executor(_GOOGLE_EXECUTOR, _demo_ya_usada_sync, uid)
+    if ya_uso:
+        await update.message.reply_text(
+            "⏰ Ya utilizaste tu demo gratuita.\n\n"
+            "Para acceder al contenido COMPLETO elige un plan:\n"
+            "💎 /semanal ($4.990) — 7 días\n"
+            "💎 /mensual ($8.990) — 30 días\n\n"
+            "¡En segundos tienes acceso a TODO!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🇨🇱 Semanal $4.990", callback_data="cmd_semanal")],
+                [InlineKeyboardButton("🇨🇱 Mensual $8.990", callback_data="cmd_mensual")],
+            ]),
+        )
+        return
     await registrar_evento(user, 'demo_solicitada', 'demo')
     PENDING_DEMO_GMAIL[uid] = True
     await update.message.reply_text(
-        "🎬 DEMO GRATIS — 15 MINUTOS\n\n"
-        "Te daré acceso de prueba a una carpeta con contenido DEMO.\n"
-        "Desde que actives, tienes 15 minutos para recorrer.\n\n"
-        "Envíame tu correo Gmail para empezar:"
+        "🎬 DEMO GRATIS — 10 MINUTOS\n\n"
+        "Te daré acceso de prueba a la carpeta DEMO.\n"
+        "IMPORTANTE: Esta carpeta contiene solo una MUESTRA del contenido.\n"
+        "No están todos los archivos — es una demostración del orden y la calidad.\n\n"
+        "✅ Acceso por 10 minutos\n"
+        "✅ Misma estructura A-Z del Drive real\n"
+        "✅ Hasta 10 fotos + 2 videos por creador\n\n"
+        "Para ver TODO el contenido completo necesitas una suscripción.\n\n"
+        "Envíame tu correo Gmail para empezar la demo:"
     )
 
 
@@ -1138,15 +1328,22 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("❌ Error compartiendo la demo. Contacta al admin.")
             return
         del PENDING_DEMO_GMAIL[user.id]
-        DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 15 * 60
+        DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 10 * 60
         demo_emails = context.bot_data.setdefault('demo_emails', {})
         demo_emails[user.id] = text
+        expires_str = (datetime.now() + timedelta(minutes=10)).isoformat(timespec='seconds')
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR, _guardar_demo_sync,
+            user.id, user.username or 'sin_username', text, expires_str,
+        )
         caption = (
-            "🎬 DEMO ACTIVADA — 15 MIN\n\n"
+            "🎬 DEMO ACTIVADA — 10 MIN\n\n"
             f"Acceso concedido a {text}\n\n"
-            "Revisa DRIVE > COMPARTIDOS CONMIGO.\n"
+            "Revisa DRIVE > COMPARTIDOS CONMIGO (te llega un email).\n"
             f"Link directo: https://drive.google.com/drive/folders/{DEMO_FOLDER_ID}\n\n"
-            "⏳ Tienes 15 minutos. Cuando expire, te enviaré los planes disponibles."
+            "⏰ RECUERDA: Esto es una DEMO. La carpeta tiene contenido LIMITADO.\n"
+            "Cuando venzan los 10 minutos, se revocará tu acceso.\n\n"
+            "Para ver TODO el contenido, elige un plan al terminar la demo."
         )
         if os.path.exists('demo_drive.png'):
             with open('demo_drive.png', 'rb') as f:
@@ -1295,7 +1492,7 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
 CAPTIONS_SAMPLES = [
     f"\U0001F4F7 Muestra real del Drive.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{tamano}}\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F525 Esto es solo una muestra.\nTenemos {{carpetas}} modelos organizados de la A a la Z.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
-    f"\U0001F48E Contenido nuevo todas las semanas.\nAcceso 24/7 y descargas sin límites.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F48E Contenido nuevo todas las semanas.\nAcceso 24/7 y descargas sin límites.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n🎬 Prueba gratis con /demo\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F4CA Revisa nombres y cantidades en /lista antes de pagar.\nTransparencia total sobre el contenido.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F31F Plan semanal $4.990 \u2022 Plan mensual $8.990\nPago seguro mediante MercadoPago.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F4E6 El Drive se actualiza todas las semanas.\nEncuentra cada carpeta rápidamente.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
@@ -1436,8 +1633,15 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as fallback_error:
             logging.error(f"Error publicando foto de respaldo: {fallback_error}")
             return
-    sample_ids = context.bot_data.setdefault('group_sample_ids', set())
-    sample_ids.add(msg.message_id)
+    # Rotation: keep max 3 posts visible, delete oldest when new arrives
+    rotating = context.bot_data.setdefault('rotating_samples', [])
+    if len(rotating) >= 3:
+        oldest = rotating.pop(0)
+        try:
+            await context.bot.delete_message(chat_id=PUBLIC_GROUP_ID, message_id=oldest)
+        except Exception:
+            pass
+    rotating.append(msg.message_id)
     promo_ids = context.bot_data.setdefault('promo_message_ids', set())
     promo_ids.add(msg.message_id)
     _trim_set(promo_ids, 500)
@@ -1697,7 +1901,7 @@ def _procesar_pago_paypal_sheet_sync(user_id, transaction_id, amount, fecha):
     service = _get_sheets_service()
     rows = _execute_sheets(service.spreadsheets().values().get(
         spreadsheetId=GOOGLE_SHEET_ID,
-        range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+        range=f"'Ventas'!A1:K{MAX_SALES_ROWS + 1}",
     )).get('values', [])
     tid = str(transaction_id)
     today = _parse_sheet_date(fecha)
@@ -1723,11 +1927,11 @@ def _procesar_pago_paypal_sheet_sync(user_id, transaction_id, amount, fecha):
                 'valueInputOption': 'USER_ENTERED',
                 'data': [
                     {
-                        'range': f"'Hoja 1'!D{row_number}:E{row_number}",
+                        'range': f"'Ventas'!D{row_number}:E{row_number}",
                         'values': [['mensual', start_date.isoformat()]],
                     },
                     {
-                        'range': f"'Hoja 1'!I{row_number}:K{row_number}",
+                        'range': f"'Ventas'!I{row_number}:K{row_number}",
                         'values': [['paypal', '', persisted_ids]],
                     },
                 ],
@@ -1751,13 +1955,13 @@ def _procesar_pago_paypal_sheet_sync(user_id, transaction_id, amount, fecha):
             'valueInputOption': 'USER_ENTERED',
             'data': [
                 {
-                    'range': f"'Hoja 1'!A{row_number}:E{row_number}",
+                    'range': f"'Ventas'!A{row_number}:E{row_number}",
                     'values': [[
                         str(user_id), 'sin_username', '', 'mensual', today.isoformat(),
                     ]],
                 },
                 {
-                    'range': f"'Hoja 1'!H{row_number}:K{row_number}",
+                    'range': f"'Ventas'!H{row_number}:K{row_number}",
                     'values': [[registered_at, 'paypal', '', tid]],
                 },
             ],
@@ -1778,7 +1982,7 @@ def _cargar_estado_pagos_paypal_sync():
         service = _get_sheets_service()
         rows = _execute_sheets(service.spreadsheets().values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+            range=f"'Ventas'!A1:K{MAX_SALES_ROWS + 1}",
         )).get('values', [])
         for row in rows[1:]:
             if not row or len(row) <= 10:
@@ -1970,7 +2174,7 @@ async def verificar_vencidos(context: ContextTypes.DEFAULT_TYPE) -> None:
             _GOOGLE_EXECUTOR,
             lambda: _execute_sheets(service.spreadsheets().values().get(
                 spreadsheetId=GOOGLE_SHEET_ID,
-                range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+                range=f"'Ventas'!A1:K{MAX_SALES_ROWS + 1}",
             ))
         )
         rows = rows.get('values', [])
@@ -2024,7 +2228,7 @@ async def verificar_proximos_vencer(context: ContextTypes.DEFAULT_TYPE) -> None:
             _GOOGLE_EXECUTOR,
             lambda: _execute_sheets(service.spreadsheets().values().get(
                 spreadsheetId=GOOGLE_SHEET_ID,
-                range=f"'Hoja 1'!A1:K{MAX_SALES_ROWS + 1}",
+                range=f"'Ventas'!A1:K{MAX_SALES_ROWS + 1}",
             ))
         )
         rows = rows.get('values', [])
@@ -2089,6 +2293,12 @@ async def _procesar_demos_vencidas(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logging.warning(f"Error revocando demo a {uid}: {e}")
         try:
+            await loop.run_in_executor(
+                _GOOGLE_EXECUTOR, _actualizar_demo_status_sync, uid, 'expirado'
+            )
+        except Exception:
+            pass
+        try:
             await context.bot.send_message(
                 chat_id=uid,
                 text=(
@@ -2141,6 +2351,7 @@ async def test_drive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await msg.edit_text(f"Error: {e}\n\nRevisa GOOGLE_SERVICE_ACCOUNT_JSON en Render")
 
 def main() -> None:
+    _run_google_sync(_inicializar_planilla_sync)
     _run_google_sync(_cargar_mensajes_sync)
     _run_google_sync(_cargar_stats_cache_sync)
     _run_google_sync(_cargar_estado_pagos_sync)
@@ -2171,6 +2382,9 @@ def main() -> None:
     )
     application.add_handler(
         MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, ocultar_salida)
+    )
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, ocultar_entrada)
     )
     application.add_handler(MessageReactionHandler(reaccion))
     application.add_handler(
@@ -2211,11 +2425,7 @@ def main() -> None:
             time=time(hour, minute, tzinfo=TZ),
             name=f'muestra_{hour}_{minute}',
         )
-    job_queue.run_daily(
-        limpiar_muestras_grupo,
-        time=time(0, 0, tzinfo=TZ),
-        name='limpieza_muestras_grupo',
-    )
+    # Rotacion continua: ya no se eliminan todas a medianoche
     job_queue.run_daily(
         actualizar_stats_semanales,
         time=time(6, 0, tzinfo=TZ),
