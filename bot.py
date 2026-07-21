@@ -189,7 +189,9 @@ def _compartir_drive_sync(email: str) -> bool:
         _execute_drive(drive.permissions().create(
             fileId=DRIVE_FOLDER_ID,
             body={'type': 'user', 'role': 'reader', 'emailAddress': email},
-            sendNotificationEmail=False
+            sendNotificationEmail=True,
+            emailMessage='¡Bienvenido a DriveVIPclub! Haz recibido acceso a la carpeta exclusiva con todo el contenido. Disfruta.'
+
         ))
         logging.info(f"Drive compartido con {email}")
         return True
