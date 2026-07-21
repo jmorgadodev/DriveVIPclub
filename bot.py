@@ -1491,10 +1491,10 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error enviando mensaje al canal: {e}")
 
 CAPTIONS_SAMPLES = [
-    f"\U0001F4F7 Muestra real del Drive.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{tamano}}\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F4F7 Muestra real del Drive.\n{{carpetas}} modelos \u2022 {{videos}} videos \u2022 {{tamano}}\n\n\U0001F3AC Prueba gratis con /demo\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F525 Esto es solo una muestra.\nTenemos {{carpetas}} modelos organizados de la A a la Z.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
-    f"\U0001F48E Contenido nuevo todas las semanas.\nAcceso 24/7 y descargas sin límites.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n🎬 Prueba gratis con /demo\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
-    f"\U0001F4CA Revisa nombres y cantidades en /lista antes de pagar.\nTransparencia total sobre el contenido.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F48E Contenido nuevo todas las semanas.\nAcceso 24/7 y descargas sin límites.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F3AC Prueba gratis con /demo\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
+    f"\U0001F4CA Revisa el listado con /lista y prueba antes con /demo.\nTransparencia total sobre el contenido antes de pagar.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F31F Plan semanal $4.990 \u2022 Plan mensual $8.990\nPago seguro mediante MercadoPago.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
     f"\U0001F4E6 El Drive se actualiza todas las semanas.\nEncuentra cada carpeta rápidamente.\n\n\U0001F916 Suscríbete con @DriveVIPclubBot\n\U0001F4AC Atención directa: {ADMIN_USERNAME}",
 ]
