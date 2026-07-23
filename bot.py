@@ -67,8 +67,8 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 MENSAJES = {}
 STATS = {}
 PENDING_GMAIL = {}
+PENDING_DEMO_GMAIL = {}
 DEMO_EXPIRY = {}
-DEMO_PUBLIC_REFCOUNT = 0
 PROCESSED_PAYMENTS = set()
 PENDING_DELETIONS = {}
 
@@ -267,52 +267,6 @@ def _revocar_drive_demo_sync(email: str) -> bool:
         return False
     except Exception as e:
         logging.error(f"Error revocando Demo Drive a {email}: {e}")
-        return False
-
-
-def _compartir_demo_publico_sync() -> str | None:
-    global DEMO_PUBLIC_REFCOUNT
-    if not DEMO_FOLDER_ID:
-        return None
-    try:
-        drive = _get_drive_service()
-        if DEMO_PUBLIC_REFCOUNT == 0:
-            _execute_drive(drive.permissions().create(
-                fileId=DEMO_FOLDER_ID,
-                body={'type': 'anyone', 'role': 'reader'},
-            ))
-            logging.info("Permiso público creado para demo")
-        DEMO_PUBLIC_REFCOUNT += 1
-        file = _execute_drive(drive.files().get(
-            fileId=DEMO_FOLDER_ID, fields='webViewLink'
-        ))
-        return file.get('webViewLink')
-    except Exception as e:
-        logging.error(f"Error creando link público demo: {e}")
-        return None
-
-
-def _revocar_demo_publico_sync() -> bool:
-    global DEMO_PUBLIC_REFCOUNT
-    if not DEMO_FOLDER_ID:
-        return False
-    try:
-        drive = _get_drive_service()
-        DEMO_PUBLIC_REFCOUNT = max(0, DEMO_PUBLIC_REFCOUNT - 1)
-        if DEMO_PUBLIC_REFCOUNT == 0:
-            perms = _execute_drive(drive.permissions().list(
-                fileId=DEMO_FOLDER_ID, fields='permissions(id,type)'
-            )).get('permissions', [])
-            for p in perms:
-                if p.get('type') == 'anyone':
-                    _execute_drive(drive.permissions().delete(
-                        fileId=DEMO_FOLDER_ID, permissionId=p['id']
-                    ))
-                    logging.info("Acceso público a demo revocado")
-                    break
-        return True
-    except Exception as e:
-        logging.error(f"Error revocando acceso público demo: {e}")
         return False
 
 
@@ -1297,6 +1251,47 @@ async def paypal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error en /paypal: {e}")
 
 
+def _obtener_demo_samples_sync() -> list | None:
+    """Selecciona 2 videos (<=100MB) y 3 fotos del DEMO_FOLDER_ID, los descarga y devuelve [(data, mime, name), ...]."""
+    if not DEMO_FOLDER_ID:
+        return None
+    try:
+        creators = _list_folder_files(DEMO_FOLDER_ID, "nextPageToken,files(id,name,mimeType)")
+        creators = [c for c in creators if c.get('mimeType') == 'application/vnd.google-apps.folder']
+        if not creators:
+            return None
+        import random, math
+        random.shuffle(creators)
+        fotos = []
+        videos = []
+        for c in creators:
+            files = _list_folder_files(c['id'], "nextPageToken,files(id,name,size,mimeType)")
+            for f in files:
+                mt = f.get('mimeType', '')
+                size = int(f.get('size', 0))
+                if mt.startswith('video/') and size <= 100 * 1024 * 1024:
+                    videos.append({'id': f['id'], 'name': f.get('name', 'video.mp4'), 'mimeType': mt})
+                elif mt.startswith('image/'):
+                    fotos.append({'id': f['id'], 'name': f.get('name', 'foto.jpg'), 'mimeType': mt})
+            if len(videos) >= 2 and len(fotos) >= 3:
+                break
+        if len(videos) < 2 or len(fotos) < 3:
+            logging.warning(f"Demo samples insuficientes: {len(videos)} videos, {len(fotos)} fotos")
+            return None
+        random.shuffle(videos)
+        random.shuffle(fotos)
+        selected = videos[:2] + fotos[:3]
+        drive = _get_drive_service()
+        result = []
+        for s in selected:
+            data = _execute_drive(drive.files().get_media(fileId=s['id']))
+            result.append((data, s['mimeType'], s['name']))
+        return result
+    except Exception as e:
+        logging.error(f"Error obteniendo muestras demo: {e}")
+        return None
+
+
 async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _solo_privado(update):
         await update.message.reply_text("ℹ️ Escríbeme en privado para solicitar una demo: @DriveVIPclubBot")
@@ -1317,13 +1312,13 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         else:
             del DEMO_EXPIRY[uid]
+    if uid in PENDING_DEMO_GMAIL:
+        await update.message.reply_text("Ya tienes una demo en proceso. Envíame tu correo Gmail para activar la carpeta completa.")
+        return
     if uid in PENDING_GMAIL:
         await update.message.reply_text(
             "Ya tienes un pago pendiente. Envíame tu Gmail para activar tu membresía."
         )
-        return
-    if not MP_ACCESS_TOKEN:
-        await update.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
         return
     loop = asyncio.get_event_loop()
     ya_uso = await loop.run_in_executor(_GOOGLE_EXECUTOR, _demo_ya_usada_sync, uid)
@@ -1341,27 +1336,44 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     await registrar_evento(user, 'demo_solicitada', 'demo')
-    loop = asyncio.get_event_loop()
-    link = await loop.run_in_executor(_GOOGLE_EXECUTOR, _compartir_demo_publico_sync)
-    if not link:
-        await update.message.reply_text("❌ Error preparando demo. Contacta al admin.")
+    await update.message.reply_text(
+        "🎬 DEMO GRATIS — 10 MINUTOS\n\n"
+        "Aquí tienes 5 archivos de muestra para que veas la calidad:\n"
+        "📹 2 videos + 📸 3 fotos\n"
+        "Esto es solo una pequeña parte de lo que hay en el Drive..."
+    )
+    samples = await loop.run_in_executor(_GOOGLE_EXECUTOR, _obtener_demo_samples_sync)
+    if not samples:
+        await update.message.reply_text("❌ Error preparando muestras. Contacta al admin.")
         return
-    DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 10 * 60
-    expires_str = (datetime.now() + timedelta(minutes=10)).isoformat(timespec='seconds')
-    await loop.run_in_executor(
-        _GOOGLE_EXECUTOR, _guardar_demo_sync,
-        user.id, user.username or 'sin_username', 'public_link', expires_str,
+    from io import BytesIO
+    for data, mime, name in samples:
+        try:
+            if mime.startswith('video/'):
+                await update.message.reply_video(video=InputFile(BytesIO(data), filename=name))
+            else:
+                await update.message.reply_photo(photo=InputFile(BytesIO(data), filename=name))
+        except Exception as e:
+            logging.warning(f"Error enviando sample demo {name}: {e}")
+    stats_text = ""
+    if STATS:
+        stats_text = (
+            f"📊 El Drive completo tiene:\n"
+            f"• {STATS.get('carpetas', '?')} modelos\n"
+            f"• {STATS.get('videos', '?')} videos\n"
+            f"• {STATS.get('fotos', '?')} fotos\n"
+            f"• {STATS.get('tamano', '?')} en total\n\n"
+        )
+    PENDING_DEMO_GMAIL[uid] = True
+    await update.message.reply_text(
+        f"¿Te gustó lo que viste?\n\n"
+        f"{stats_text}"
+        f"La carpeta DEMO completa tiene {STATS.get('carpetas', '?')} carpetas organizadas A-Z "
+        f"con mucho más contenido.\n\n"
+        f"📧 Para acceder a la carpeta DEMO completa por 10 minutos, "
+        f"envíame tu correo Gmail y te comparto el acceso:\n\n"
+        f"(Solo usaremos tu correo para darte acceso, sin compromiso)"
     )
-    await registrar_evento(user, 'demo_access_granted', 'demo')
-    caption = (
-        "🎬 DEMO ACTIVADA — 10 MIN\n\n"
-        "Acceso concedido. Revisa el link:\n\n"
-        f"{link}\n\n"
-        "⏰ La carpeta contiene solo una MUESTRA del contenido.\n"
-        "Cuando venzan los 10 minutos, se revocará tu acceso.\n\n"
-        "Para ver TODO el contenido, elige un plan al terminar la demo."
-    )
-    await update.message.reply_text(caption)
 
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1371,7 +1383,49 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _solo_privado(update):
         return
     text = update.message.text.strip()
-    if user.id in PENDING_GMAIL:
+    if user.id in PENDING_DEMO_GMAIL:
+        if '@' not in text or '.' not in text:
+            await update.message.reply_text("❌ Eso no parece un Gmail válido. Envíame tu correo electrónico (ej: usuario@gmail.com)")
+            return
+        loop = asyncio.get_event_loop()
+        ok = await loop.run_in_executor(_GOOGLE_EXECUTOR, _compartir_drive_demo_sync, text)
+        if not ok:
+            await update.message.reply_text("❌ Error compartiendo la demo. Contacta al admin.")
+            return
+        del PENDING_DEMO_GMAIL[user.id]
+        demo_emails = context.bot_data.setdefault('demo_emails', {})
+        demo_emails[user.id] = text
+        DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 10 * 60
+        expires_str = (datetime.now() + timedelta(minutes=10)).isoformat(timespec='seconds')
+        await loop.run_in_executor(
+            _GOOGLE_EXECUTOR, _guardar_demo_sync,
+            user.id, user.username or 'sin_username', text, expires_str,
+        )
+        caption = (
+            "🎬 DEMO COMPLETA ACTIVADA — 10 MIN\n\n"
+            f"Acceso concedido a {text}\n\n"
+            "Revisa DRIVE > COMPARTIDOS CONMIGO (te llega un email).\n"
+            f"Link directo: https://drive.google.com/drive/folders/{DEMO_FOLDER_ID}\n\n"
+            "⏰ Tienes 10 minutos para explorar la carpeta DEMO completa.\n"
+            "Cuando venza el tiempo, se revocará tu acceso.\n\n"
+            "Para ver TODO el contenido, elige un plan al terminar la demo."
+        )
+        if os.path.exists('demo_drive.png'):
+            with open('demo_drive.png', 'rb') as f:
+                await update.message.reply_photo(photo=InputFile(f), caption=caption)
+        else:
+            await update.message.reply_text(caption)
+        await registrar_evento(user, 'demo_access_granted', 'demo')
+        await context.bot.send_message(
+            chat_id=PUBLIC_GROUP_ID,
+            text=(
+                f"👤 Demo solicitada por @{user.username or user.id}\n"
+                f"ID: {user.id}\n"
+                f"Email: {text}\n"
+                f"{ADMIN_USERNAME}"
+            ),
+        )
+        return
     if user.id in PENDING_GMAIL:
         if '@' not in text or '.' not in text:
             await update.message.reply_text("❌ Eso no parece un Gmail válido. Envíame tu correo electrónico (ej: usuario@gmail.com)")
@@ -2298,9 +2352,11 @@ async def _procesar_demos_vencidas(context: ContextTypes.DEFAULT_TYPE) -> None:
     for uid in vencidas:
         del DEMO_EXPIRY[uid]
         try:
-            await loop.run_in_executor(_GOOGLE_EXECUTOR, _revocar_demo_publico_sync)
+            user_data = context.bot_data.get('demo_emails', {}).pop(uid, None)
+            if user_data:
+                await loop.run_in_executor(_GOOGLE_EXECUTOR, _revocar_drive_demo_sync, user_data)
         except Exception as e:
-            logging.warning(f"Error revocando demo publica a {uid}: {e}")
+            logging.warning(f"Error revocando demo a {uid}: {e}")
         try:
             await loop.run_in_executor(
                 _GOOGLE_EXECUTOR, _actualizar_demo_status_sync, uid, 'expirado'
