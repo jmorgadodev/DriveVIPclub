@@ -359,7 +359,7 @@ def _inicializar_planilla_sync():
         logging.warning(f"Error inicializando planilla: {e}")
 
 
-def _guardar_demo_sync(user_id: int, username: str, email: str, expires_at: str) -> bool:
+def _guardar_demo_sync(user_id: int, username: str, email: str, expires_at: str, status: str = 'activo') -> bool:
     try:
         service = _get_sheets_service()
         _execute_sheets(service.spreadsheets().values().append(
@@ -370,7 +370,7 @@ def _guardar_demo_sync(user_id: int, username: str, email: str, expires_at: str)
             body={'values': [[
                 str(user_id), username, email,
                 datetime.now(TZ).isoformat(timespec='seconds'),
-                expires_at, 'activo',
+                expires_at, status,
             ]]},
         ))
         return True
@@ -1346,6 +1346,11 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not samples:
         await update.message.reply_text("❌ Error preparando muestras. Contacta al admin.")
         return
+    now_str = datetime.now(TZ).isoformat(timespec='seconds')
+    await loop.run_in_executor(
+        _GOOGLE_EXECUTOR, _guardar_demo_sync,
+        uid, user.username or 'sin_username', 'pendiente', now_str, 'muestras_enviadas',
+    )
     from io import BytesIO
     for data, mime, name in samples:
         try:
