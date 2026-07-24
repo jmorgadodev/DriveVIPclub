@@ -7,6 +7,7 @@ import random
 import threading
 import urllib.request
 import urllib.parse
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, time, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -142,15 +143,22 @@ def _get_sheets_service():
         with _SHEETS_LOCK:
             if _SHEETS_SERVICE is not None:
                 return _SHEETS_SERVICE
+            creds = None
             if GOOGLE_SERVICE_ACCOUNT_JSON:
-                import base64
-                info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
-                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-            elif GOOGLE_SERVICE_ACCOUNT:
-                with open(GOOGLE_SERVICE_ACCOUNT) as f:
-                    info = json.load(f)
-                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-            else:
+                try:
+                    import base64
+                    info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
+                    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+                except Exception as e:
+                    logging.warning(f"Error en GOOGLE_SERVICE_ACCOUNT_JSON para sheets: {e}")
+            if not creds and GOOGLE_SERVICE_ACCOUNT and os.path.exists(GOOGLE_SERVICE_ACCOUNT):
+                try:
+                    with open(GOOGLE_SERVICE_ACCOUNT) as f:
+                        info = json.load(f)
+                    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+                except Exception as e:
+                    logging.warning(f"Error en GOOGLE_SERVICE_ACCOUNT para sheets: {e}")
+            if not creds and os.path.exists('token.json'):
                 creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
             _SHEETS_SERVICE = build('sheets', 'v4', credentials=creds, cache_discovery=False)
     return _SHEETS_SERVICE
@@ -161,26 +169,54 @@ def _get_drive_service():
         with _DRIVE_LOCK:
             if _DRIVE_SERVICE is not None:
                 return _DRIVE_SERVICE
+            creds = None
             if GOOGLE_DRIVE_OAUTH_TOKEN_JSON:
-                import base64
-                info = json.loads(base64.b64decode(GOOGLE_DRIVE_OAUTH_TOKEN_JSON))
-                creds = Credentials.from_authorized_user_info(
-                    info, scopes=['https://www.googleapis.com/auth/drive']
-                )
-            elif os.path.exists('.drive_token.json'):
-                creds = Credentials.from_authorized_user_file(
-                    '.drive_token.json', scopes=['https://www.googleapis.com/auth/drive']
-                )
-            elif GOOGLE_SERVICE_ACCOUNT_JSON:
-                import base64
-                info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
-                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-            elif GOOGLE_SERVICE_ACCOUNT:
-                with open(GOOGLE_SERVICE_ACCOUNT) as f:
-                    info = json.load(f)
-                creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-            else:
-                creds = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
+                try:
+                    import base64
+                    info = json.loads(base64.b64decode(GOOGLE_DRIVE_OAUTH_TOKEN_JSON))
+                    c = Credentials.from_authorized_user_info(
+                        info, scopes=['https://www.googleapis.com/auth/drive']
+                    )
+                    if c.expired and c.refresh_token:
+                        from google.auth.transport.requests import Request
+                        c.refresh(Request())
+                    creds = c
+                except Exception as e:
+                    logging.warning(f"Error o expiración en GOOGLE_DRIVE_OAUTH_TOKEN_JSON: {e}")
+            if not creds and os.path.exists('.drive_token.json'):
+                try:
+                    c = Credentials.from_authorized_user_file(
+                        '.drive_token.json', scopes=['https://www.googleapis.com/auth/drive']
+                    )
+                    if c.expired and c.refresh_token:
+                        from google.auth.transport.requests import Request
+                        c.refresh(Request())
+                    creds = c
+                except Exception as e:
+                    logging.warning(f"Error o expiración en .drive_token.json ({e}), usando Service Account...")
+            if not creds and GOOGLE_SERVICE_ACCOUNT_JSON:
+                try:
+                    import base64
+                    info = json.loads(base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON))
+                    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+                except Exception as e:
+                    logging.warning(f"Error cargando GOOGLE_SERVICE_ACCOUNT_JSON: {e}")
+            if not creds and GOOGLE_SERVICE_ACCOUNT and os.path.exists(GOOGLE_SERVICE_ACCOUNT):
+                try:
+                    with open(GOOGLE_SERVICE_ACCOUNT) as f:
+                        info = json.load(f)
+                    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+                except Exception as e:
+                    logging.warning(f"Error cargando GOOGLE_SERVICE_ACCOUNT: {e}")
+            if not creds and os.path.exists('token.json'):
+                try:
+                    c = Credentials.from_authorized_user_file('token.json', scopes=SCOPES)
+                    if c.expired and c.refresh_token:
+                        from google.auth.transport.requests import Request
+                        c.refresh(Request())
+                    creds = c
+                except Exception as e:
+                    logging.warning(f"Error en token.json: {e}")
             _DRIVE_SERVICE = build('drive', 'v3', credentials=creds, cache_discovery=False)
     return _DRIVE_SERVICE
 
@@ -1256,44 +1292,64 @@ async def paypal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _obtener_demo_samples_sync() -> Optional[list]:
-    """Selecciona 2 videos (<=100MB) y 3 fotos del DEMO_FOLDER_ID, los descarga y devuelve [(data, mime, name), ...]."""
-    if not DEMO_FOLDER_ID:
-        return None
+    """Selecciona 2 videos (<=100MB) y 3 fotos de Drive, los descarga y devuelve [(data, mime, name), ...]."""
     try:
-        creators = _list_folder_files(DEMO_FOLDER_ID, "nextPageToken,files(id,name,mimeType)")
-        creators = [c for c in creators if c.get('mimeType') == 'application/vnd.google-apps.folder']
-        if not creators:
-            return None
-        import random, math
-        random.shuffle(creators)
+        drive = _get_drive_service()
         fotos = []
         videos = []
-        for c in creators:
-            files = _list_folder_files(c['id'], "nextPageToken,files(id,name,size,mimeType)")
-            for f in files:
-                mt = f.get('mimeType', '')
-                size = int(f.get('size', 0))
-                if mt.startswith('video/') and size <= 100 * 1024 * 1024:
-                    videos.append({'id': f['id'], 'name': f.get('name', 'video.mp4'), 'mimeType': mt})
-                elif mt.startswith('image/'):
-                    fotos.append({'id': f['id'], 'name': f.get('name', 'foto.jpg'), 'mimeType': mt})
-            if len(videos) >= 2 and len(fotos) >= 3:
-                break
-        if len(videos) < 2 or len(fotos) < 3:
-            logging.warning(f"Demo samples insuficientes: {len(videos)} videos, {len(fotos)} fotos")
-            return None
-        random.shuffle(videos)
+        
+        # 1. Obtenemos imágenes desde Google Drive
+        r_imgs = _execute_drive(drive.files().list(
+            q="mimeType contains 'image/' and trashed=false",
+            fields="files(id,name,mimeType,size)",
+            pageSize=50
+        ))
+        for f in r_imgs.get('files', []):
+            fotos.append({'id': f['id'], 'name': f.get('name', 'foto.jpg'), 'mimeType': f.get('mimeType', 'image/jpeg')})
+            
+        # 2. Obtenemos videos (<=100MB) desde Google Drive
+        r_vids = _execute_drive(drive.files().list(
+            q="mimeType contains 'video/' and trashed=false",
+            fields="files(id,name,mimeType,size)",
+            pageSize=50
+        ))
+        for f in r_vids.get('files', []):
+            sz = int(f.get('size', 0))
+            if sz <= 100 * 1024 * 1024:
+                videos.append({'id': f['id'], 'name': f.get('name', 'video.mp4'), 'mimeType': f.get('mimeType', 'video/mp4')})
+                
+        import random
         random.shuffle(fotos)
+        random.shuffle(videos)
+        
         selected = videos[:2] + fotos[:3]
-        drive = _get_drive_service()
         result = []
         for s in selected:
             data = _execute_drive(drive.files().get_media(fileId=s['id']))
             result.append((data, s['mimeType'], s['name']))
-        return result
+            
+        if result:
+            return result
     except Exception as e:
-        logging.error(f"Error obteniendo muestras demo: {e}")
-        return None
+        logging.error(f"Error obteniendo muestras demo desde Drive: {e}")
+        
+    # Fallback local en caso de error de red o cuotas de API
+    try:
+        local_samples = []
+        sample_dir = 'samples'
+        if os.path.exists(sample_dir):
+            for fn in os.listdir(sample_dir):
+                fp = os.path.join(sample_dir, fn)
+                if os.path.isfile(fp):
+                    mime = 'image/png' if fn.endswith('.png') else 'image/jpeg'
+                    with open(fp, 'rb') as f:
+                        local_samples.append((f.read(), mime, fn))
+        if local_samples:
+            return local_samples
+    except Exception as e:
+        logging.error(f"Error en fallback de muestras locales: {e}")
+        
+    return None
 
 
 async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
