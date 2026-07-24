@@ -24,3 +24,7 @@ services:
         value: "1EHGYTF0QHiZUFq8FEaa3W3UppGGupaKb"
       - key: LISTADO_SHEET_ID
         value: "1K5lJLdMJfPH76JrV4uC9-QdDly8rLg8XAWxoecWAe3k"
+      - key: DEMO_FOLDER_ID
+        value: "1udPdcChVe_3phzPLc3-U6FumZ-xZpR_J"
+      - key: TELEGRAM_BOT_TOKEN
+        value: "8767323818:AAGuMsfzUq7cslF5KBLKMKGEs7L7esSHw94"
