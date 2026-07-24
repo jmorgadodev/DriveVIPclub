@@ -982,7 +982,9 @@ async def _bienvenida_chat_member(update: Update, context: ContextTypes.DEFAULT_
 
 async def ocultar_salida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
-    if not message or message.chat_id != PUBLIC_GROUP_ID or not message.left_chat_member:
+    chat_id = message.chat_id if message else 0
+    logging.info(f"ocultar_salida llamada: chat={chat_id}, has_message={message is not None}, has_left={message and message.left_chat_member}")
+    if not message or message.chat_id not in (PUBLIC_GROUP_ID, VIP_GROUP_ID) or not message.left_chat_member:
         return
     try:
         await message.delete()
@@ -993,6 +995,8 @@ async def ocultar_salida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def ocultar_entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+    chat_id = message.chat_id if message else 0
+    logging.info(f"ocultar_entrada llamada: chat={chat_id}, has_message={message is not None}, has_new={message and message.new_chat_members}")
     if not message or message.chat_id not in (PUBLIC_GROUP_ID, VIP_GROUP_ID):
         return
     if not message.new_chat_members:
@@ -1251,7 +1255,7 @@ async def paypal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error en /paypal: {e}")
 
 
-def _obtener_demo_samples_sync() -> list | None:
+def _obtener_demo_samples_sync() -> Optional[list]:
     """Selecciona 2 videos (<=100MB) y 3 fotos del DEMO_FOLDER_ID, los descarga y devuelve [(data, mime, name), ...]."""
     if not DEMO_FOLDER_ID:
         return None
