@@ -1437,8 +1437,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("❌ Error compartiendo la demo. Contacta al admin.")
             return
         del PENDING_DEMO_GMAIL[user.id]
-        demo_emails = context.bot_data.setdefault('demo_emails', {})
-        demo_emails[user.id] = text
+        if context and context.bot_data is not None:
+            demo_emails = context.bot_data.setdefault('demo_emails', {})
+            demo_emails[user.id] = text
         DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 10 * 60
         expires_str = (datetime.now() + timedelta(minutes=10)).isoformat(timespec='seconds')
         await loop.run_in_executor(
@@ -1460,15 +1461,16 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             await update.message.reply_text(caption)
         await registrar_evento(user, 'demo_access_granted', 'demo')
-        await context.bot.send_message(
-            chat_id=PUBLIC_GROUP_ID,
-            text=(
-                f"👤 Demo solicitada por @{user.username or user.id}\n"
-                f"ID: {user.id}\n"
-                f"Email: {text}\n"
-                f"{ADMIN_USERNAME}"
-            ),
-        )
+        if context and context.bot:
+            await context.bot.send_message(
+                chat_id=PUBLIC_GROUP_ID,
+                text=(
+                    f"👤 Demo solicitada por @{user.username or user.id}\n"
+                    f"ID: {user.id}\n"
+                    f"Email: {text}\n"
+                    f"{ADMIN_USERNAME}"
+                ),
+            )
         return
     if user.id in PENDING_GMAIL:
         if '@' not in text or '.' not in text:
