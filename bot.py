@@ -1396,30 +1396,12 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     await registrar_evento(user, 'demo_solicitada', 'demo')
-    await update.message.reply_text(
-        "🎬 DEMO GRATIS — 10 MINUTOS\n\n"
-        "Aquí tienes 5 archivos de muestra para que veas la calidad:\n"
-        "📹 2 videos + 📸 3 fotos\n"
-        "Esto es solo una pequeña parte de lo que hay en el Drive..."
-    )
-    samples = await loop.run_in_executor(_GOOGLE_EXECUTOR, _obtener_demo_samples_sync)
-    if not samples:
-        await update.message.reply_text("❌ Error preparando muestras. Contacta al admin.")
-        return
     now_str = datetime.now(TZ).isoformat(timespec='seconds')
     await loop.run_in_executor(
         _GOOGLE_EXECUTOR, _guardar_demo_sync,
-        uid, user.username or 'sin_username', 'pendiente', now_str, 'muestras_enviadas',
+        uid, user.username or 'sin_username', 'pendiente', now_str, 'esperando_gmail',
     )
-    from io import BytesIO
-    for data, mime, name in samples:
-        try:
-            if mime.startswith('video/'):
-                await update.message.reply_video(video=InputFile(BytesIO(data), filename=name))
-            else:
-                await update.message.reply_photo(photo=InputFile(BytesIO(data), filename=name))
-        except Exception as e:
-            logging.warning(f"Error enviando sample demo {name}: {e}")
+    PENDING_DEMO_GMAIL[uid] = True
     stats_text = ""
     if STATS:
         stats_text = (
@@ -1429,15 +1411,12 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"• {STATS.get('fotos', '?')} fotos\n"
             f"• {STATS.get('tamano', '?')} en total\n\n"
         )
-    PENDING_DEMO_GMAIL[uid] = True
     await update.message.reply_text(
-        f"¿Te gustó lo que viste?\n\n"
+        f"🎬 DEMO GRATIS — ACCESO POR 10 MINUTOS AL DRIVE\n\n"
         f"{stats_text}"
-        f"La carpeta DEMO completa tiene {STATS.get('carpetas', '?')} carpetas organizadas A-Z "
-        f"con mucho más contenido.\n\n"
-        f"📧 Para acceder a la carpeta DEMO completa por 10 minutos, "
-        f"envíame tu correo Gmail y te comparto el acceso:\n\n"
-        f"(Solo usaremos tu correo para darte acceso, sin compromiso)"
+        f"La carpeta DEMO contiene muestras organizadas de la A a la Z para que veas el contenido y la calidad.\n\n"
+        f"📧 Envíame tu correo Gmail ahora para compartirte el acceso inmediato durante 10 minutos:\n\n"
+        f"(Solo usaremos tu correo para darte acceso al Drive, sin compromiso)"
     )
 
 
