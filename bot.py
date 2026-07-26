@@ -20,6 +20,7 @@ except ImportError:
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     ChatMemberHandler,
     CommandHandler,
     ContextTypes,
@@ -1292,48 +1293,66 @@ async def paypal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _obtener_demo_samples_sync() -> Optional[list]:
-    """Selecciona 2 videos (<=100MB) y 3 fotos de Drive, los descarga y devuelve [(data, mime, name), ...]."""
-    try:
-        drive = _get_drive_service()
-        fotos = []
-        videos = []
-        
-        # 1. Obtenemos imágenes desde Google Drive
-        r_imgs = _execute_drive(drive.files().list(
-            q="mimeType contains 'image/' and trashed=false",
-            fields="files(id,name,mimeType,size)",
-            pageSize=50
-        ))
-        for f in r_imgs.get('files', []):
-            fotos.append({'id': f['id'], 'name': f.get('name', 'foto.jpg'), 'mimeType': f.get('mimeType', 'image/jpeg')})
-            
-        # 2. Obtenemos videos (<=100MB) desde Google Drive
-        r_vids = _execute_drive(drive.files().list(
-            q="mimeType contains 'video/' and trashed=false",
-            fields="files(id,name,mimeType,size)",
-            pageSize=50
-        ))
-        for f in r_vids.get('files', []):
-            sz = int(f.get('size', 0))
-            if sz <= 100 * 1024 * 1024:
-                videos.append({'id': f['id'], 'name': f.get('name', 'video.mp4'), 'mimeType': f.get('mimeType', 'video/mp4')})
-                
-        import random
-        random.shuffle(fotos)
-        random.shuffle(videos)
-        
+    """Busca 2 videos (<=100MB) y 3 fotos: primero en DEMO_FOLDER_ID, luego en todo el Drive, fallback local."""
+    files_pool = []
+
+    # Intento 1: buscamos dentro de DEMO_FOLDER_ID si está configurado
+    if DEMO_FOLDER_ID:
+        try:
+            subfolders = _list_folder_files(DEMO_FOLDER_ID, "nextPageToken,files(id,name,mimeType)")
+            subfolders = [c for c in subfolders if c.get('mimeType') == 'application/vnd.google-apps.folder']
+            for sf in subfolders:
+                for f in _list_folder_files(sf['id'], "nextPageToken,files(id,name,size,mimeType)"):
+                    files_pool.append(f)
+                if sum(1 for f in files_pool if f.get('mimeType','').startswith('video/')) >= 2 \
+                   and sum(1 for f in files_pool if f.get('mimeType','').startswith('image/')) >= 3:
+                    break
+        except Exception as e:
+            logging.warning(f"Error listando DEMO_FOLDER_ID: {e}")
+
+    # Intento 2: búsqueda general en todo el Drive
+    if sum(1 for f in files_pool if f.get('mimeType','').startswith('video/')) < 2 \
+       or sum(1 for f in files_pool if f.get('mimeType','').startswith('image/')) < 3:
+        try:
+            drive = _get_drive_service()
+            extra_imgs = _execute_drive(drive.files().list(
+                q="mimeType contains 'image/' and trashed=false",
+                fields="files(id,name,mimeType,size)",
+                pageSize=50
+            )).get('files', [])
+            extra_vids = _execute_drive(drive.files().list(
+                q="mimeType contains 'video/' and trashed=false",
+                fields="files(id,name,mimeType,size)",
+                pageSize=50
+            )).get('files', [])
+            seen_ids = {f['id'] for f in files_pool}
+            for f in extra_imgs + extra_vids:
+                if f['id'] not in seen_ids:
+                    files_pool.append(f)
+                    seen_ids.add(f['id'])
+        except Exception as e:
+            logging.warning(f"Error en búsqueda general Drive: {e}")
+
+    import random
+    fotos = [f for f in files_pool if f.get('mimeType','').startswith('image/')]
+    videos = [f for f in files_pool if f.get('mimeType','').startswith('video/') and int(f.get('size', 0)) <= 100 * 1024 * 1024]
+    random.shuffle(fotos)
+    random.shuffle(videos)
+
+    if len(videos) >= 2 and len(fotos) >= 3:
         selected = videos[:2] + fotos[:3]
-        result = []
-        for s in selected:
-            data = _execute_drive(drive.files().get_media(fileId=s['id']))
-            result.append((data, s['mimeType'], s['name']))
-            
-        if result:
-            return result
-    except Exception as e:
-        logging.error(f"Error obteniendo muestras demo desde Drive: {e}")
-        
-    # Fallback local en caso de error de red o cuotas de API
+        try:
+            drive = _get_drive_service()
+            result = []
+            for s in selected:
+                data = _execute_drive(drive.files().get_media(fileId=s['id']))
+                result.append((data, s['mimeType'], s['name']))
+            if result:
+                return result
+        except Exception as e:
+            logging.error(f"Error descargando muestras demo: {e}")
+
+    # Fallback local
     try:
         local_samples = []
         sample_dir = 'samples'
@@ -1347,8 +1366,8 @@ def _obtener_demo_samples_sync() -> Optional[list]:
         if local_samples:
             return local_samples
     except Exception as e:
-        logging.error(f"Error en fallback de muestras locales: {e}")
-        
+        logging.error(f"Error en fallback local: {e}")
+
     return None
 
 
@@ -1396,6 +1415,26 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     await registrar_evento(user, 'demo_solicitada', 'demo')
+    await update.message.reply_text(
+        "🎬 DEMO GRATIS — 10 MINUTOS\n\n"
+        "Aquí tienes 5 archivos de muestra para que veas la calidad:\n"
+        "📹 2 videos + 📸 3 fotos\n"
+        "Luego te pediré tu Gmail para darte acceso completo a la carpeta DEMO por 10 min..."
+    )
+    samples = await loop.run_in_executor(_GOOGLE_EXECUTOR, _obtener_demo_samples_sync)
+    if samples:
+        from io import BytesIO
+        for data, mime, name in samples:
+            try:
+                if mime.startswith('video/'):
+                    await update.message.reply_video(video=InputFile(BytesIO(data), filename=name))
+                else:
+                    await update.message.reply_photo(photo=InputFile(BytesIO(data), filename=name))
+            except Exception as e:
+                logging.warning(f"Error enviando sample demo {name}: {e}")
+        await registrar_evento(user, 'demo_samples_sent', 'demo')
+    else:
+        logging.warning("No se pudieron obtener muestras demo, se salta ese paso")
     now_str = datetime.now(TZ).isoformat(timespec='seconds')
     await loop.run_in_executor(
         _GOOGLE_EXECUTOR, _guardar_demo_sync,
@@ -1418,6 +1457,18 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"📧 Envíame tu correo Gmail ahora para compartirte el acceso inmediato durante 10 minutos:\n\n"
         f"(Solo usaremos tu correo para darte acceso al Drive, sin compromiso)"
     )
+
+
+async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    data = query.data
+    if data == 'cmd_semanal':
+        await semanal(update, context)
+    elif data == 'cmd_mensual':
+        await mensual(update, context)
 
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2501,6 +2552,7 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje)
     )
+    application.add_handler(CallbackQueryHandler(manejar_callback, pattern="^cmd_"))
     job_queue = application.job_queue
     job_queue.run_repeating(
         _poll_payments,
