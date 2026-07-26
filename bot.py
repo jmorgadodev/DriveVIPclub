@@ -1464,11 +1464,41 @@ async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not query or not query.data:
         return
     await query.answer()
+    user = update.effective_user
+    if not user:
+        return
+    chat = update.effective_chat
+    if not chat or chat.type != 'private':
+        await query.message.reply_text("⚠️ Para contratar un plan, escríbeme en privado: @DriveVIPclubBot")
+        return
     data = query.data
+    plan = None
+    precio = 0
+    plan_id = ''
     if data == 'cmd_semanal':
-        await semanal(update, context)
+        plan = 'Semanal'
+        precio = 4990
+        plan_id = 'semanal'
     elif data == 'cmd_mensual':
-        await mensual(update, context)
+        plan = 'Mensual'
+        precio = 8990
+        plan_id = 'mensual'
+    else:
+        return
+    if not MP_ACCESS_TOKEN:
+        await query.message.reply_text("❌ Sistema de pago no disponible. Contacta al admin.")
+        return
+    try:
+        await registrar_evento(user, 'plan_selected', plan_id)
+        data = await _crear_preferencia(user.id, precio, plan, user.username or 'sin_username')
+        if 'init_point' in data:
+            await registrar_evento(user, 'payment_link_created', plan_id)
+            await query.message.reply_text(f"💎 Plan {plan} ${precio:,}\n\n{data['init_point']}\n\n✅ Paga y el bot te pedirá tu Gmail.")
+        else:
+            await query.message.reply_text("❌ Error generando link. Contacta al admin.")
+    except Exception as e:
+        await query.message.reply_text("❌ Error de conexión. Intenta más tarde.")
+        logging.error(f"Error en callback {data}: {e}")
 
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
