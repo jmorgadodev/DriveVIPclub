@@ -179,6 +179,8 @@ class WeeklyStatsTests(unittest.IsolatedAsyncioTestCase):
 
 class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):
     async def test_uses_photo_when_video_upload_times_out(self):
+        bot.ROTATING_SAMPLES.clear()
+        bot.PROMO_MESSAGE_IDS.clear()
         telegram_bot = _TelegramBot()
         context = SimpleNamespace(
             bot=telegram_bot,
@@ -210,20 +212,22 @@ class PublicarMuestraTests(unittest.IsolatedAsyncioTestCase):
             telegram_bot.photo_reply_markups,
             [bot.SALES_MENU, bot.SALES_MENU],
         )
-        self.assertEqual(context.bot_data["group_sample_ids"], {1})
+        self.assertEqual(bot.ROTATING_SAMPLES, [1])
+        self.assertEqual(bot.PROMO_MESSAGE_IDS, {1})
 
     async def test_midnight_cleanup_deletes_group_samples(self):
+        bot.ROTATING_SAMPLES.clear()
+        bot.PROMO_MESSAGE_IDS.clear()
+        bot.ROTATING_SAMPLES.extend([10, 11])
+        bot.PROMO_MESSAGE_IDS.update([10, 11, 12])
         telegram_bot = _TelegramBot()
-        context = SimpleNamespace(
-            bot=telegram_bot,
-            bot_data={"group_sample_ids": {10, 11}, "promo_message_ids": {10, 11, 12}},
-        )
+        context = SimpleNamespace(bot=telegram_bot, bot_data={})
 
         await bot.limpiar_muestras_grupo(context)
 
         self.assertEqual(set(telegram_bot.deleted_message_ids), {10, 11})
-        self.assertEqual(context.bot_data["group_sample_ids"], set())
-        self.assertEqual(context.bot_data["promo_message_ids"], {12})
+        self.assertEqual(bot.ROTATING_SAMPLES, [])
+        self.assertEqual(bot.PROMO_MESSAGE_IDS, {12})
 
 
 class OcultarSalidaTests(unittest.IsolatedAsyncioTestCase):

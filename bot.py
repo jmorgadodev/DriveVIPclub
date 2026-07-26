@@ -74,6 +74,8 @@ DEMO_EXPIRY = {}
 DEMO_EMAILS = {}
 PROCESSED_PAYMENTS = set()
 PENDING_DELETIONS = {}
+ROTATING_SAMPLES = []
+PROMO_MESSAGE_IDS = set()
 
 _SHEETS_SERVICE = None
 _DRIVE_SERVICE = None
@@ -1687,11 +1689,10 @@ async def mensaje_automatico(context: ContextTypes.DEFAULT_TYPE) -> None:
                 text=text,
             )
         context.application.create_task(
-            eliminar_mensaje(message, SCHEDULED_DELETE_SECONDS)
+            programar_eliminacion_persistente(message, SCHEDULED_DELETE_SECONDS)
         )
-        pm_ids = context.bot_data.setdefault('promo_message_ids', set())
-        pm_ids.add(message.message_id)
-        _trim_set(pm_ids, 500)
+        PROMO_MESSAGE_IDS.add(message.message_id)
+        _trim_set(PROMO_MESSAGE_IDS, 500)
     except Exception as e:
         logging.error(f"Error enviando mensaje automático: {e}")
 
@@ -1711,7 +1712,7 @@ async def mensaje_listado(context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
         context.application.create_task(
-            eliminar_mensaje(message, SCHEDULED_DELETE_SECONDS)
+            programar_eliminacion_persistente(message, SCHEDULED_DELETE_SECONDS)
         )
     except Exception as e:
         logging.error(f"Error enviando mensaje del listado: {e}")
@@ -1734,7 +1735,7 @@ async def mensaje_canal(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         message = await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
         context.application.create_task(
-            eliminar_mensaje(message, SCHEDULED_DELETE_SECONDS)
+            programar_eliminacion_persistente(message, SCHEDULED_DELETE_SECONDS)
         )
     except Exception as e:
         logging.error(f"Error enviando mensaje al canal: {e}")
@@ -1884,17 +1885,15 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
             logging.error(f"Error publicando foto de respaldo: {fallback_error}")
             return
     # Rotation: keep max 3 posts visible, delete oldest when new arrives
-    rotating = context.bot_data.setdefault('rotating_samples', [])
-    if len(rotating) >= 3:
-        oldest = rotating.pop(0)
+    if len(ROTATING_SAMPLES) >= 3:
+        oldest = ROTATING_SAMPLES.pop(0)
         try:
             await context.bot.delete_message(chat_id=PUBLIC_GROUP_ID, message_id=oldest)
         except Exception:
             pass
-    rotating.append(msg.message_id)
-    promo_ids = context.bot_data.setdefault('promo_message_ids', set())
-    promo_ids.add(msg.message_id)
-    _trim_set(promo_ids, 500)
+    ROTATING_SAMPLES.append(msg.message_id)
+    PROMO_MESSAGE_IDS.add(msg.message_id)
+    _trim_set(PROMO_MESSAGE_IDS, 500)
     try:
         if is_vid:
             channel_message = await context.bot.send_video(
@@ -1911,7 +1910,7 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
                 reply_markup=SALES_MENU,
             )
         context.application.create_task(
-            eliminar_mensaje(channel_message, SCHEDULED_DELETE_SECONDS)
+            programar_eliminacion_persistente(channel_message, SCHEDULED_DELETE_SECONDS)
         )
         logging.info("Muestra publicada en el grupo y el canal")
     except Exception as e:
@@ -1919,9 +1918,9 @@ async def publicar_muestra(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def limpiar_muestras_grupo(context: ContextTypes.DEFAULT_TYPE) -> None:
-    sample_ids = context.bot_data.get('group_sample_ids', set())
+    sample_ids = list(ROTATING_SAMPLES)
     deleted = 0
-    for message_id in list(sample_ids):
+    for message_id in sample_ids:
         try:
             await context.bot.delete_message(
                 chat_id=PUBLIC_GROUP_ID,
@@ -1930,10 +1929,8 @@ async def limpiar_muestras_grupo(context: ContextTypes.DEFAULT_TYPE) -> None:
             deleted += 1
         except Exception as e:
             logging.warning(f"No se pudo eliminar la muestra {message_id}: {e}")
-    promo_ids = context.bot_data.get('promo_message_ids')
-    if promo_ids:
-        promo_ids.difference_update(sample_ids)
-    sample_ids.clear()
+    PROMO_MESSAGE_IDS.difference_update(sample_ids)
+    ROTATING_SAMPLES.clear()
     logging.info(f"Limpieza de muestras del grupo: {deleted} eliminadas")
 
 
@@ -1966,7 +1963,7 @@ async def reaccion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not reaction.new_reaction:
         return
-    if reaction.message_id not in context.bot_data.get('promo_message_ids', set()):
+    if reaction.message_id not in PROMO_MESSAGE_IDS:
         return
 
     user = reaction.user
