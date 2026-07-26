@@ -71,6 +71,7 @@ STATS = {}
 PENDING_GMAIL = {}
 PENDING_DEMO_GMAIL = {}
 DEMO_EXPIRY = {}
+DEMO_EMAILS = {}
 PROCESSED_PAYMENTS = set()
 PENDING_DELETIONS = {}
 
@@ -417,6 +418,7 @@ def _guardar_demo_sync(user_id: int, username: str, email: str, expires_at: str,
 
 
 def _actualizar_demo_status_sync(user_id: int, status: str) -> None:
+    """Actualiza solo la columna F (status) del usuario en Demos."""
     try:
         service = _get_sheets_service()
         rows = _execute_sheets(service.spreadsheets().values().get(
@@ -436,6 +438,29 @@ def _actualizar_demo_status_sync(user_id: int, status: str) -> None:
         logging.error(f"Error actualizando status demo: {e}")
 
 
+def _actualizar_demo_sync(user_id: int, email: str, expires_at: str, status: str = 'activo') -> bool:
+    """Actualiza email, expires_at y status (columnas C, D, E, F) del usuario en Demos."""
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="'Demos'!A:F",
+        )).get('values', [])
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == str(user_id):
+                _execute_sheets(service.spreadsheets().values().update(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f"'Demos'!C{i}:F{i}",
+                    valueInputOption='RAW',
+                    body={'values': [[email, expires_at, status]]},
+                ))
+                return True
+        return False
+    except Exception as e:
+        logging.error(f"Error actualizando demo: {e}")
+        return False
+
+
 def _demo_ya_usada_sync(user_id: int) -> bool:
     try:
         service = _get_sheets_service()
@@ -445,11 +470,46 @@ def _demo_ya_usada_sync(user_id: int) -> bool:
         )).get('values', [])
         for row in rows[1:]:
             if row and row[0] == str(user_id):
-                return True
+                status = row[5].strip().lower() if len(row) > 5 else ''
+                if status != 'esperando_gmail':
+                    return True
         return False
     except Exception as e:
         logging.error(f"Error consultando demo: {e}")
         return False
+
+
+def _cargar_demos_activas_sync():
+    """Carga demos activas desde la sheet a DEMO_EXPIRY y DEMO_EMAILS tras reinicio."""
+    try:
+        service = _get_sheets_service()
+        rows = _execute_sheets(service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="'Demos'!A:F",
+        )).get('values', [])
+        ahora = datetime.now().timestamp()
+        cargadas = 0
+        for row in rows[1:]:
+            if len(row) >= 6 and row[0].isdigit():
+                uid = int(row[0])
+                status = row[5].strip().lower()
+                email = row[2].strip() if row[2].strip() and row[2].strip() != 'pendiente' else ''
+                expires_at = row[4].strip() if len(row) > 4 and row[4].strip() else ''
+                if status == 'activo' and email and expires_at:
+                    try:
+                        exp = datetime.fromisoformat(expires_at).timestamp()
+                        if exp > ahora:
+                            DEMO_EXPIRY[uid] = exp
+                            DEMO_EMAILS[uid] = email
+                            cargadas += 1
+                    except Exception:
+                        pass
+        logging.info(
+            f"Demos activas cargadas desde sheet: {cargadas} activas, "
+            f"{len(DEMO_EXPIRY)} en DEMO_EXPIRY, {len(DEMO_EMAILS)} emails"
+        )
+    except Exception as e:
+        logging.error(f"Error cargando demos activas: {e}")
 
 
 def _actualizar_sheet_sync(user_id: int, col_letter: str, value) -> None:
@@ -1518,14 +1578,12 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("❌ Error compartiendo la demo. Contacta al admin.")
             return
         del PENDING_DEMO_GMAIL[user.id]
-        if context and context.bot_data is not None:
-            demo_emails = context.bot_data.setdefault('demo_emails', {})
-            demo_emails[user.id] = text
+        DEMO_EMAILS[user.id] = text
         DEMO_EXPIRY[user.id] = datetime.now().timestamp() + 10 * 60
         expires_str = (datetime.now() + timedelta(minutes=10)).isoformat(timespec='seconds')
         await loop.run_in_executor(
-            _GOOGLE_EXECUTOR, _guardar_demo_sync,
-            user.id, user.username or 'sin_username', text, expires_str,
+            _GOOGLE_EXECUTOR, _actualizar_demo_sync,
+            user.id, text, expires_str, 'activo',
         )
         caption = (
             "🎬 DEMO COMPLETA ACTIVADA — 10 MIN\n\n"
@@ -2478,8 +2536,8 @@ async def _procesar_demos_vencidas(context: ContextTypes.DEFAULT_TYPE) -> None:
     loop = asyncio.get_event_loop()
     for uid in vencidas:
         del DEMO_EXPIRY[uid]
+        user_data = DEMO_EMAILS.pop(uid, None)
         try:
-            user_data = context.bot_data.get('demo_emails', {}).pop(uid, None)
             if user_data:
                 await loop.run_in_executor(_GOOGLE_EXECUTOR, _revocar_drive_demo_sync, user_data)
         except Exception as e:
@@ -2550,6 +2608,7 @@ def main() -> None:
     _run_google_sync(_cargar_estado_pagos_paypal_sync)
     _run_google_sync(_cargar_ordenes_paypal_sync)
     _run_google_sync(_cargar_eliminaciones_sync)
+    _run_google_sync(_cargar_demos_activas_sync)
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
     application = (
