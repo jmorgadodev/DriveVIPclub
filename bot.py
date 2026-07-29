@@ -1477,26 +1477,6 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     await registrar_evento(user, 'demo_solicitada', 'demo')
-    await update.message.reply_text(
-        "🎬 DEMO GRATIS — 10 MINUTOS\n\n"
-        "Aquí tienes 5 archivos de muestra para que veas la calidad:\n"
-        "📹 2 videos + 📸 3 fotos\n"
-        "Luego te pediré tu Gmail para darte acceso completo a la carpeta DEMO por 10 min..."
-    )
-    samples = await loop.run_in_executor(_GOOGLE_EXECUTOR, _obtener_demo_samples_sync)
-    if samples:
-        from io import BytesIO
-        for data, mime, name in samples:
-            try:
-                if mime.startswith('video/'):
-                    await update.message.reply_video(video=InputFile(BytesIO(data), filename=name))
-                else:
-                    await update.message.reply_photo(photo=InputFile(BytesIO(data), filename=name))
-            except Exception as e:
-                logging.warning(f"Error enviando sample demo {name}: {e}")
-        await registrar_evento(user, 'demo_samples_sent', 'demo')
-    else:
-        logging.warning("No se pudieron obtener muestras demo, se salta ese paso")
     now_str = datetime.now(TZ).isoformat(timespec='seconds')
     await loop.run_in_executor(
         _GOOGLE_EXECUTOR, _guardar_demo_sync,
@@ -1513,11 +1493,13 @@ async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"• {STATS.get('tamano', '?')} en total\n\n"
         )
     await update.message.reply_text(
-        f"🎬 DEMO GRATIS — ACCESO POR 10 MINUTOS AL DRIVE\n\n"
+        "🎬 DEMO GRATIS — 10 MINUTOS DE ACCESO\n\n"
+        "Te daré acceso inmediato a la carpeta DEMO con contenido real "
+        "para que veas la calidad antes de decidirte.\n\n"
         f"{stats_text}"
-        f"La carpeta DEMO contiene muestras organizadas de la A a la Z para que veas el contenido y la calidad.\n\n"
-        f"📧 Envíame tu correo Gmail ahora para compartirte el acceso inmediato durante 10 minutos:\n\n"
-        f"(Solo usaremos tu correo para darte acceso al Drive, sin compromiso)"
+        "📧 Para compartirte el acceso necesito tu correo Gmail.\n\n"
+        "Escribe tu Gmail aquí y en segundos tendrás la carpeta disponible.\n"
+        "(Solo lo usaré para darte acceso, sin compromiso)"
     )
 
 
